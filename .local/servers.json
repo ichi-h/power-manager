@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "servers": [
+    {
+      "id": "local-test",
+      "name": "ローカル確認用サーバー",
+      "macAddress": "00:11:22:33:44:55",
+      "wol": {
+        "broadcastAddress": "127.0.0.1",
+        "port": 9
+      },
+      "ssh": {
+        "host": "127.0.0.1",
+        "port": 2222,
+        "user": "power-manager",
+        "shutdownCommand": "sudo systemctl poweroff"
+      }
+    }
+  ]
+}
