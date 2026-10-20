@@ -2,6 +2,14 @@
 
 ホームラボ内のサーバーを、Tailscale 配下の Nginx から起動・停止・死活確認する個人用アプリケーションです。アプリケーション本体は loopback でのみ待ち受けます。
 
+## ドキュメント
+
+- [要件定義](docs/requirements.md) — 目的・完成像・機能/非機能/セキュリティ要件
+- [アーキテクチャ設計](docs/architecture.md) — 技術選定とその根拠、構成、実装方針
+- [セキュリティ設計](docs/security.md) — 認証・CSRF・秘密情報・プロセス権限
+- [運用設計](docs/operations.md) — 設定JSON・NixOS 配備・CI・テスト
+- [旧設計書（非規範）](docs/design.md) — 分割前の原案。上記 4 文書と食い違う場合は 4 文書を正とする
+
 ## 開発
 
 ```sh
@@ -26,7 +34,7 @@ POWER_MANAGER_SSH_IDENTITY_FILE=/run/secrets/power-manager/id_ed25519
 POWER_MANAGER_SSH_KNOWN_HOSTS_FILE=/etc/power-manager/known_hosts
 ```
 
-`POWER_MANAGER_AUTH_PASSWORD_HASH` は Argon2id のハッシュです。アプリケーションはハッシュを生成しません。設定JSONの形式は [設計書](docs/design.md) を参照してください。設定・鍵・known_hosts は `/home` の外に置き、`power-manager` ユーザーが秘密鍵を `0400` または `0600` で読めるようにしてください。
+`POWER_MANAGER_AUTH_PASSWORD_HASH` は Argon2id のハッシュです。アプリケーションはハッシュを生成しません。設定JSONの形式は [運用設計](docs/operations.md) を参照してください。設定・鍵・known_hosts は `/home` の外に置き、`power-manager` ユーザーが秘密鍵を `0400` または `0600` で読めるようにしてください。
 
 ローカル開発時に限り、`POWER_MANAGER_PUBLIC_ORIGIN=http://localhost:8080` のようにホスト名が `localhost` の HTTP Origin を使用できます。`127.0.0.1` や外部ホストの HTTP Origin は使用できません。
 
