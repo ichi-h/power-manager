@@ -7,12 +7,15 @@
  *
  * このモジュールは保持のみを担い、記録の契機（単体・一括・予約の実行経路）は
  * `app/lib/power.server.ts` の `onRecord` フックから渡ってくる。画面（「最近の実行」欄）
- * への読み出しは `recent()` を使う。新しい順で返すため、破棄順（最古から）と
- * 読み出し順（最新から）が一致する。
+ * への読み出しは `recent()` を使う。保持の破棄は最古から、読み出しは最新から順に返す。
  *
  * 件数と配列はどちらも 1 つのオブジェクトへ閉じ、操作ごとにアトミックに更新する
  * （ awaits を挟まないため、イベントループ上で分割されない）。配列を都度作るため、
  * `recent()` の呼び出し側が参照を共有して破棄済みの要素を見ることはない。
+ *
+ * 要素は `push` 時に `Object.freeze` で不変にする。`recent()` は `[...records]` の
+ * 浅いコピー（配列のコピー）で返すが、要素オブジェクトは凍結済みのため、
+ * 呼び出し側が要素フィールドを書き換えても内部の保持へ波及しない。
  */
 import { createContext, type RouterContext } from "react-router";
 
@@ -48,13 +51,17 @@ export function createOperationHistory(
 
   return {
     push(record: PowerOperationRecord) {
-      records.push(record);
+      // 保持する要素は不変とする。呼び出し側が渡したオブジェクトを後から書き換えても、
+      // バッファ内の保持へは波及しない。
+      records.push(Object.freeze(record));
       // push は必ず 1 件だけ増やすため、超過時の破棄は固定の 1 件で足りる。
       if (records.length > capacity) records.splice(0, records.length - capacity);
     },
 
     recent() {
-      // 読み出し側で並べ替え・破棄されないよう、コピーを渡す。
+      // 読み出し側で並べ替え・破棄されないよう、コピーを渡す。要素は push 時に
+      // `Object.freeze` で不変にしているため、要素フィールドの書き換えも保持へ
+      // 波及しない（浅いコピーで足りる）。
       return [...records].reverse();
     },
   };
@@ -88,9 +95,10 @@ type RouterContextProviderLike = { get: <T>(key: RouterContext<T>) => T };
 export function requireHistory(context: RouterContextProviderLike): OperationHistory {
   try {
     return context.get(historyContext);
-  } catch {
+  } catch (cause) {
     throw new Error(
       "リングバッファが load context にありません（server/app.ts の createLoadContext を経由していません）",
+      { cause },
     );
   }
 }

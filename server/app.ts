@@ -27,20 +27,50 @@ import {
   historyContext,
   type OperationHistory,
 } from "../app/lib/history.server.ts";
+import { logPowerOperation } from "../app/lib/power-log.server.ts";
 import {
+  createPowerOperator,
   createStatusChecker,
+  type PowerOperationRecord,
   type StatusChecker,
 } from "../app/lib/power.server.ts";
+import { operatorContext } from "../app/lib/operator-context.server.ts";
 import { statusCheckerContext } from "../app/routes/api.status.tsx";
 import { logRequestFailure } from "./log.ts";
 
-export type { ConfigStore, OperationHistory, RuntimeConfig, StatusChecker };
+export type {
+  ConfigStore,
+  OperationHistory,
+  PowerOperationRecord,
+  RuntimeConfig,
+  StatusChecker,
+};
 
 /** プロセス共有の死活確認器。1 つのプロセスで 1 つだけ作る（NFR-08）。 */
 const sharedStatusChecker = createStatusChecker();
 
 /** プロセス共有の実行結果リングバッファ（FR-13）。メモリ上のみで、再起動で空になることを許容する（NFR-02）。 */
 const sharedHistory = createOperationHistory();
+
+/**
+ * 電源操作の実行結果の記録（`PowerOperator` の `onRecord`）。
+ *
+ * リングバッファ（FR-13）への追加と 1 行 JSON ログ（NFR-10,
+ * `docs/architecture.md` 7.1）の両方を行う。いずれも例外を投げないため、
+ * 操作の成否には影響しない。
+ */
+function recordOperation(record: PowerOperationRecord): void {
+  sharedHistory.push(record);
+  logPowerOperation(record);
+}
+
+/**
+ * プロセス共有の電源操作器（FR-04〜FR-06, FR-11）。
+ *
+ * 実行結果は `onRecord` からリングバッファとログの両方へ記録される。
+ * `t008` 以降の loader/action はこの実体を `operatorContext` から参照する。
+ */
+const sharedOperator = createPowerOperator({ onRecord: recordOperation });
 
 /**
  * loader/action へ渡す load context を組み立てる。
@@ -60,6 +90,8 @@ export function createLoadContext(
   context.set(statusCheckerContext, sharedStatusChecker);
   // リングバッファも同じく server-only の実体をここから載せる（FR-13）。
   context.set(historyContext, sharedHistory);
+  // 電源操作器も同じく server-only の実体をここから載せる（FR-04〜FR-06, FR-11）。
+  context.set(operatorContext, sharedOperator);
   return context;
 }
 

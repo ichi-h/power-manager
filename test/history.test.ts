@@ -3,18 +3,18 @@
  *
  * - 上限 100 件を超えたら最古の要素から破棄される。
  * - `recent` は新しい順で返し、保持外の要素は返さない。
- * - 呼び出し側へ渡した配列を後から書き換えても内部の保持へ影響しない。
+ * - 呼び出し側へ渡した配列や要素を後から書き換えても内部の保持へ影響しない。
  */
+import { RouterContextProvider } from "react-router";
 import { describe, expect, test } from "vitest";
 
 import {
   createOperationHistory,
   historyCapacity,
+  historyContext,
   requireHistory,
 } from "../app/lib/history.server.ts";
 import type { PowerOperationRecord } from "../app/lib/power.server.ts";
-import { RouterContextProvider } from "react-router";
-import { historyContext } from "../app/lib/history.server.ts";
 
 /** テスト用の要素 1 件。順序を見分けるため `target.id` に連番を使う。 */
 function record(id: string): PowerOperationRecord {
@@ -97,6 +97,40 @@ describe("createOperationHistory", () => {
     history.push(record("a"));
     expect(history.recent()).toEqual([]);
   });
+
+  test("ちょうど capacity 件のときは破棄しない", () => {
+    const history = createOperationHistory();
+    for (let index = 0; index < historyCapacity; index += 1) {
+      history.push(record(`server-${index}`));
+    }
+
+    const recent = history.recent();
+    expect(recent).toHaveLength(historyCapacity);
+    // 最古（server-0）が残っており、最新が先頭に来る。
+    expect(recent[0]).toEqual(record(`server-${historyCapacity - 1}`));
+    expect(recent[historyCapacity - 1]).toEqual(record("server-0"));
+  });
+
+  test("capacity が負のときは何も保持しない", () => {
+    const history = createOperationHistory(-1);
+    history.push(record("a"));
+    expect(history.recent()).toEqual([]);
+  });
+
+  test("要素は不変で、読み出し側の要素書き換えは保持へ波及しない", () => {
+    const history = createOperationHistory();
+    const pushed = record("a");
+    history.push(pushed);
+
+    // push 時に要素が凍結されている。
+    expect(Object.isFrozen(history.recent()[0])).toBe(true);
+
+    // 渡した側のオブジェクトを後から書き換えても、保持へは波及しない。
+    expect(() => {
+      (pushed as { at: string }).at = "2027-01-01T00:00:00.000Z";
+    }).toThrow();
+    expect(history.recent()[0]?.at).toBe("2026-01-02T03:04:05.678Z");
+  });
 });
 
 describe("load context", () => {
@@ -112,6 +146,19 @@ describe("load context", () => {
     expect(() => requireHistory(new RouterContextProvider())).toThrow(
       /load context/,
     );
+  });
+
+  test("配線不整合のエラーは元のエラーを cause として保持する", () => {
+    let thrown: unknown;
+    try {
+      requireHistory(new RouterContextProvider());
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).cause).toBeInstanceOf(Error);
+    expect((thrown as Error).cause).not.toBe(thrown);
   });
 
   test("historyContext はモジュールを評価し直しても同じ実体になる", async () => {

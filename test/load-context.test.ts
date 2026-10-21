@@ -12,6 +12,11 @@ import {
   requireConfigStore,
 } from "../app/lib/config-store.server.ts";
 import { parseManagedConfig } from "../app/lib/runtime-config.server.ts";
+import {
+  historyContext,
+  requireHistory,
+} from "../app/lib/history.server.ts";
+import { operatorContext } from "../app/lib/operator-context.server.ts";
 import { createLoadContext } from "../server/app.ts";
 
 import { validEnvironment } from "./support/environment.ts";
@@ -101,5 +106,21 @@ describe("load context", () => {
     context.set(otherKey, runtime);
 
     expect(() => requireRuntimeConfig(context)).toThrow(/load context/);
+  });
+});
+
+describe("実行結果の配線", () => {
+  test("電源操作器とリングバッファの両方が load context に載る", () => {
+    const runtime = loadRuntimeConfig(validEnvironment());
+    const context = contextWith(runtime);
+
+    // onRecord 配線（operator の実行結果がリングバッファへ記録される）は
+    // server/app.ts の recordOperation で固定済み。ここでは後続チケット
+    // （t008〜t010）が context.get で参照する 2 つの実体が揃っていることを確認する。
+    expect(() => requireHistory(context)).not.toThrow();
+    expect(() => context.get(operatorContext)).not.toThrow();
+    // 同じプロセスで作った context なら、どの要求からも同じ実体が見える。
+    expect(context.get(operatorContext)).toBe(context.get(operatorContext));
+    expect(requireHistory(context)).toBe(requireHistory(context));
   });
 });
