@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import Dashboard, {
   statusRefreshIntervalMs,
+  type BatchOperationResult,
   type DashboardLoaderData,
   type OperationResult,
 } from '../app/routes/dashboard.tsx';
@@ -60,7 +61,11 @@ function record(
 function renderDashboard(
   data: DashboardLoaderData,
   options: {
-    action?: () => OperationResult | Response | Promise<OperationResult>;
+    action?: () =>
+      | OperationResult
+      | BatchOperationResult
+      | Response
+      | Promise<OperationResult | BatchOperationResult>;
     onStatusLoad?: () => void;
     onHistoryLoad?: () => void;
     onLoad?: () => void;
@@ -399,6 +404,109 @@ describe('停止の確認', () => {
     );
     await vi.waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
     expect(window.confirm).not.toHaveBeenCalled();
+  });
+});
+
+describe('一括操作', () => {
+  /** 一括操作の応答。draw 側は要約と対象ごとの結果だけを使う。 */
+  function batchResult(
+    overrides: Partial<BatchOperationResult> = {},
+  ): BatchOperationResult {
+    return {
+      target: { type: 'all' },
+      operation: 'wake',
+      results: [
+        { target: 'nas', operation: 'wake', result: 'succeeded' },
+        { target: 'test-01', operation: 'wake', result: 'succeeded' },
+      ],
+      summary: { ok: 2, failed: 0, skipped: 0 },
+      ...overrides,
+    };
+  }
+
+  test('全台一括とグループごとの見出し・ボタンを出す', async () => {
+    renderDashboard(loaderData());
+
+    expect(await screen.findByRole('heading', { name: 'ストレージ' })).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'すべてのサーバー' })).toBeDefined();
+    // 全台 1 組 + グループ 1 組（ストレージ）の 起動・停止。
+    expect(screen.getAllByRole('button', { name: '全台起動' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: '全台停止' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'グループ起動' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'グループ停止' })).toHaveLength(1);
+  });
+
+  test('サーバーが 0 台のときは一括ボタンを出さない', async () => {
+    renderDashboard(loaderData({ servers: [], groups: [], states: {} }));
+    await screen.findByText('サーバーが登録されていません。');
+    expect(screen.queryByRole('button', { name: '全台起動' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'グループ起動' })).toBeNull();
+  });
+
+  test('グループ一括は scope にグループ ID を送る', async () => {
+    const onAction = vi.fn();
+    renderDashboard(loaderData(), { onAction, action: () => batchResult() });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'グループ起動' }));
+    await vi.waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
+    const form = onAction.mock.calls[0]?.[0] as FormData;
+    expect(form.get('intent')).toBe('wake-group');
+    expect(form.get('scope')).toBe('storage');
+  });
+
+  test('全台一括は scope=all を送る', async () => {
+    const onAction = vi.fn();
+    renderDashboard(loaderData(), { onAction, action: () => batchResult() });
+
+    fireEvent.click(await screen.findByRole('button', { name: '全台起動' }));
+    await vi.waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
+    const form = onAction.mock.calls[0]?.[0] as FormData;
+    expect(form.get('intent')).toBe('wake-group');
+    expect(form.get('scope')).toBe('all');
+  });
+
+  test('一括停止は対象の表示名を列挙した確認を 1 回だけ出し、拒否したら送信しない', async () => {
+    const onAction = vi.fn();
+    vi.mocked(window.confirm).mockReturnValue(false);
+    renderDashboard(loaderData(), { onAction });
+
+    fireEvent.click(await screen.findByRole('button', { name: '全台停止' }));
+    expect(window.confirm).toHaveBeenCalledTimes(1);
+    const message = vi.mocked(window.confirm).mock.calls[0]?.[0];
+    expect(message).toContain('NAS');
+    expect(message).toContain('検証機 01');
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
+  test('承認したら 1 回だけ送信する', async () => {
+    const onAction = vi.fn();
+    renderDashboard(loaderData(), { onAction, action: () => batchResult() });
+
+    fireEvent.click(await screen.findByRole('button', { name: '全台停止' }));
+    expect(window.confirm).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
+    const form = onAction.mock.calls[0]?.[0] as FormData;
+    expect(form.get('intent')).toBe('shutdown-group');
+  });
+
+  test('完了後に対象ごとの結果と要約を出す', async () => {
+    renderDashboard(loaderData(), {
+      action: () =>
+        batchResult({
+          results: [
+            { target: 'nas', operation: 'wake', result: 'succeeded' },
+            { target: 'test-01', operation: 'wake', result: 'skipped' },
+          ],
+          summary: { ok: 1, failed: 0, skipped: 1 },
+        }),
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: '全台起動' }));
+    expect(
+      await screen.findByText('1 件成功 / 0 件失敗 / 1 件スキップ'),
+    ).toBeDefined();
+    expect(screen.getByText('NAS: 成功')).toBeDefined();
+    expect(screen.getByText('検証機 01: スキップ')).toBeDefined();
   });
 });
 

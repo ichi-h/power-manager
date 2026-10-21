@@ -429,6 +429,93 @@ export type PowerOperationRecord = {
 };
 
 /**
+ * 一括操作の対象となるサーバー 1 台分の定義。
+ *
+ * 排他制御と実行はこの形だけを受け取り、所属グループ（`groups`）に依存しない。
+ * 対象集合の確定は `resolveBatchTargets` が行う（FR-11）。
+ */
+export type OperableServer = {
+  readonly id: string;
+  readonly macAddress: string;
+  readonly wol: {
+    readonly broadcastAddress: string;
+    readonly port: number;
+  };
+  readonly ssh: {
+    readonly host: string;
+    readonly port: number;
+    readonly user: string;
+    readonly shutdownCommand: string;
+  };
+};
+
+/**
+ * 一括操作の対象範囲（FR-11）。
+ *
+ * `all` は定義に依らない全台一括。`group` は 1 つのグループに所属する全サーバー。
+ */
+export type BatchOperationScope =
+  | { readonly type: 'group'; readonly id: string }
+  | { readonly type: 'all' };
+
+/**
+ * 一括操作の対象サーバー集合を確定する（FR-11, `docs/operations.md` 2.2）。
+ *
+ * - `all` は定義順の全サーバー。
+ * - `group` は `groups` に指定 ID を含むサーバー。
+ * - 対象は ID で重複排除し、同じサーバーを 2 回操作しない。定義上サーバー ID は
+ *   集合内で一意（検証で保証）だが、対象集合の確定側でも 1 回に畳んでおく。
+ * - 存在しないグループ ID を指定した場合は空の集合を返す。呼び出し側（action）が
+ *   定義済みかどうかを判断し、未知のグループは要求不正として扱う。
+ */
+export function resolveBatchTargets<
+  T extends { readonly id: string; readonly groups: readonly string[] },
+>(servers: ReadonlyArray<T>, scope: BatchOperationScope): ReadonlyArray<T> {
+  const seen = new Set<string>();
+  const targets: T[] = [];
+  for (const server of servers) {
+    if (seen.has(server.id)) continue;
+    if (scope.type === 'group' && !server.groups.includes(scope.id)) continue;
+    seen.add(server.id);
+    targets.push(server);
+  }
+  return targets;
+}
+
+/**
+ * 一括操作の結果と要約（FR-11）。
+ *
+ * `records` は対象ごとの結果（`{ target, result, code }` を含む
+ * `PowerOperationRecord`）、`summary` は「n 件成功 / m 件失敗 / k 件スキップ」の
+ * 件数である。部分失敗を全体の失敗に読み替えないため、`records` の成否は畳み込まない。
+ */
+export type BatchOperationOutcome = {
+  readonly records: ReadonlyArray<PowerOperationRecord>;
+  readonly summary: {
+    readonly ok: number;
+    readonly failed: number;
+    readonly skipped: number;
+  };
+};
+
+/**
+ * 一括操作の結果から要約を作る（FR-11）。
+ */
+export function summarizeBatchResults(
+  records: ReadonlyArray<PowerOperationRecord>,
+): BatchOperationOutcome['summary'] {
+  let ok = 0;
+  let failed = 0;
+  let skipped = 0;
+  for (const record of records) {
+    if (record.result === 'succeeded') ok += 1;
+    else if (record.result === 'skipped') skipped += 1;
+    else failed += 1;
+  }
+  return { ok, failed, skipped };
+}
+
+/**
  * 電源操作の実行を排他する器（FR-06）。
  *
  * 対象 ID ごとの実行中フラグで排他する。実行中の対象への操作は `busy` として拒否する。
@@ -472,30 +559,19 @@ export type PowerOperator = {
   /**
    * 複数台へ一括で電源操作を実行する（FR-11）。
    *
-   * busy の対象を `skipped` として除外し、残りは継続する。実行は並列度 8 に抑える。
+   * `targets` は `resolveBatchTargets` で確定した対象集合を渡す（重複排除済み）。
+   * busy の対象を `skipped` として除外し、残りは並列度 8 に抑えて継続する。1 台の失敗や
+   * 例外は全体の失敗に読み替えず、対象ごとの結果と要約（`BatchOperationOutcome`）に畳む。
    */
   operateAll(
-    groupId: string,
+    scope: BatchOperationScope,
     operation: PowerOperation,
-    servers: ReadonlyArray<{
-      readonly id: string;
-      readonly macAddress: string;
-      readonly wol: {
-        readonly broadcastAddress: string;
-        readonly port: number;
-      };
-      readonly ssh: {
-        readonly host: string;
-        readonly port: number;
-        readonly user: string;
-        readonly shutdownCommand: string;
-      };
-    }>,
+    targets: ReadonlyArray<OperableServer>,
     runtime: {
       readonly sshIdentityFile: string;
       readonly sshKnownHostsFile: string;
     },
-  ): Promise<ReadonlyArray<PowerOperationRecord>>;
+  ): Promise<BatchOperationOutcome>;
   /** 現在実行中の対象 ID 一覧。テストで排他状態を確認するためにだけ公開する。 */
   busyTargets(): ReadonlySet<string>;
   /** 進行中の操作を破棄する。テストの後始末以外に呼ぶ必要はない。 */
@@ -643,21 +719,22 @@ export function createPowerOperator(
       return operateOne(serverId, target, operation, server, runtime, options);
     },
 
-    async operateAll(groupId, operation, servers, runtime) {
+    async operateAll(scope, operation, targets, runtime) {
       // 一括は busy の対象を除外し、残りを並列度 8 で実行する（FR-11）。
+      // 対象は確定済み（ID 重複なし）のため、そのまま 1 台 1 回ずつ実行する。
       const records = await Promise.all(
-        servers.map(async (server) =>
+        targets.map(async (target) =>
           operateOne(
-            server.id,
-            { type: 'server', id: server.id },
+            target.id,
+            { type: 'server', id: target.id },
             operation,
-            server,
+            target,
             runtime,
-            { group: groupId },
+            scope.type === 'group' ? { group: scope.id } : undefined,
           ),
         ),
       );
-      return records;
+      return { records, summary: summarizeBatchResults(records) };
     },
 
     busyTargets() {

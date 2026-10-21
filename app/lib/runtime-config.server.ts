@@ -262,13 +262,22 @@ export function collectCrossFieldIssues(config: ManagedConfig): string[] {
   const serverIds = new Set(config.servers.map((server) => server.id));
 
   // サーバーが参照するグループは明示定義されていなければならない（FR-11）。
+  // 同じグループ ID の重複は、一括操作の対象集合（ID での重複排除）を変えないが、
+  // 所属の書き間違いである可能性が高く、定義として意味を持たないため指摘する。
   for (const [index, server] of config.servers.entries()) {
+    const seenGroups = new Set<string>();
     for (const [groupIndex, groupId] of server.groups.entries()) {
       if (!groupIds.has(groupId)) {
         issues.push(
           `servers.${index}.groups.${groupIndex}: グループ ${groupId} が定義されていません`,
         );
       }
+      if (seenGroups.has(groupId)) {
+        issues.push(
+          `servers.${index}.groups.${groupIndex}: グループ ${groupId} が重複しています`,
+        );
+      }
+      seenGroups.add(groupId);
     }
   }
 

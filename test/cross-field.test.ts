@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
+import { resolveBatchTargets } from '../app/lib/power.server.ts';
 import {
   ManagedConfigError,
   parseManagedConfig,
@@ -82,6 +83,25 @@ describe('相互参照', () => {
     expectRejected(input, [
       'servers.0.groups.1: グループ missing が定義されていません',
     ]);
+  });
+
+  test('サーバーの所属グループの重複を拒否する', () => {
+    const input = validConfig();
+    input.servers[0]!.groups = ['storage', 'storage'];
+
+    expectRejected(input, [
+      'servers.0.groups.1: グループ storage が重複しています',
+    ]);
+  });
+
+  test('所属グループの重複は一括操作の対象集合を変えない（ID で重複排除）', () => {
+    // 検証は重複を拒否するが、対象集合の確定側も 1 台 1 回に畳む（docs/operations.md 2.2）。
+    expect(
+      resolveBatchTargets(
+        [{ id: 'nas', groups: ['storage', 'storage'] }],
+        { type: 'group', id: 'storage' },
+      ).map((server) => server.id),
+    ).toEqual(['nas']);
   });
 
   test('サーバーを持たないグループを拒否する', () => {

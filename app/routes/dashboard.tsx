@@ -12,7 +12,7 @@
  * `fetcher.submit` で action を呼び、`fetcher.state` / `fetcher.data` をその行に出す
  * （FR-07）。ページ全体の再読み込みも URL の変更も起こさない（FR-14）。
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useFetcher, type RouterContext } from 'react-router';
 
 import type { Route } from './+types/dashboard';
@@ -28,10 +28,12 @@ import type {
   ServerState,
 } from '../lib/model.ts';
 import { operatorContext } from '../lib/operator-context.server.ts';
-import type {
-  PowerOperationCode,
-  PowerOperator,
-  PowerOperationRecord,
+import {
+  resolveBatchTargets,
+  type BatchOperationScope,
+  type PowerOperationCode,
+  type PowerOperator,
+  type PowerOperationRecord,
 } from '../lib/power.server.ts';
 import { requireSshRuntime } from '../lib/ssh-runtime-context.server.ts';
 import {
@@ -130,21 +132,44 @@ export type OperationResult = {
 };
 
 /**
+ * 一括操作の action が返す結果（FR-11）。
+ *
+ * `results` は対象ごとの結果（単体操作と同じ規則で畳み込んだ種別）、`summary` は
+ * 「n 件成功 / m 件失敗 / k 件スキップ」の件数である。`target` は要求された範囲
+ * （全台またはグループ ID）をそのまま返す。
+ */
+export type BatchOperationResult = {
+  readonly target: BatchOperationScope;
+  readonly operation: PowerOperation;
+  readonly results: ReadonlyArray<OperationResult>;
+  readonly summary: {
+    readonly ok: number;
+    readonly failed: number;
+    readonly skipped: number;
+  };
+};
+
+/**
  * 画面に出す結果種別への畳み込み。
  *
  * `busy` は「実行中なので拒否した」を表す。単体操作の操作器は `skipped` + `busy` を返し、
  * 一括操作や予約の `skipped` は「対象を飛ばした」を表す。分類（`code`）が `busy` のときだけ
  * 「実行中（拒否）」とし、それ以外の `skipped` は「スキップ」と出し分ける（FR-07, FR-11）。
  */
-export function toResultKind(record: {
-  readonly result: PowerOperationRecord['result'];
-  readonly code: PowerOperationRecord['code'];
-}): OperationResultKind {
+export function toResultKind(
+  record: {
+    readonly result: PowerOperationRecord['result'];
+    readonly code: PowerOperationRecord['code'];
+  },
+  scope: 'single' | 'batch' = 'single',
+): OperationResultKind {
   if (record.result === 'succeeded') return 'succeeded';
   // 単体操作の busy は操作器が `{ result: 'skipped', code: 'busy' }` を返す
   // (`app/routes/dashboard.tsx` の action が受ける `PowerOperationRecord`)。`skipped` は
   // 一括操作で実行中の対象を飛ばした意味であり、単体操作の拒否とは表示区分が違うため、
   // `code === 'busy'` を `result === 'skipped'` より先に判定する (FR-07)。
+  // 一括操作では busy も含めて「対象を飛ばした」を表すため `skipped` に畳む (FR-11)。
+  if (scope === 'batch' && record.result === 'skipped') return 'skipped';
   if (record.code === 'busy') return 'rejected';
   if (record.result === 'skipped') return 'skipped';
   return 'failed';
@@ -161,9 +186,14 @@ export function toResultKind(record: {
  * あり、ここでは fetcher 向けの JSON 応答だけを扱う。
  */
 export async function action({ request, context }: Route.ActionArgs) {
-  const config = requireConfigStore(context).current();
   const form = await request.formData();
   const intent = form.get('intent');
+
+  if (intent === 'wake-group' || intent === 'shutdown-group') {
+    return runBatch(form, context, intent === 'wake-group' ? 'wake' : 'shutdown');
+  }
+
+  const config = requireConfigStore(context).current();
   const target = form.get('target');
 
   if (intent !== 'wake' && intent !== 'shutdown') return badRequest();
@@ -186,6 +216,63 @@ export async function action({ request, context }: Route.ActionArgs) {
     result: toResultKind(record),
   };
 
+  return jsonResponse(body);
+}
+
+/**
+ * 一括操作の action（FR-11）。
+ *
+ * `scope` は全台一括の `all` か、グループ ID。対象集合は `resolveBatchTargets` で
+ * 確定して ID で重複排除する（1 台 1 回）。結果は単体操作と同じ規則で畳み込み、
+ * 対象ごとの結果と要約 `{ ok, failed, skipped }` を返す。部分失敗は全体の失敗に
+ * 読み替えず、常に 200 で返す（実行できなかったことは要約と対象ごとの結果で示す）。
+ */
+async function runBatch(
+  form: FormData,
+  context: RouterContextProviderLike,
+  operation: PowerOperation,
+): Promise<Response> {
+  const config = requireConfigStore(context).current();
+  const rawScope = form.get('scope');
+  if (typeof rawScope !== 'string' || rawScope.length === 0) {
+    return badRequest();
+  }
+
+  let scope: BatchOperationScope;
+  if (rawScope === 'all') {
+    scope = { type: 'all' };
+  } else if (config.groups.some((group) => group.id === rawScope)) {
+    scope = { type: 'group', id: rawScope };
+  } else {
+    return badRequest();
+  }
+
+  const targets = resolveBatchTargets(config.servers, scope);
+  if (targets.length === 0) return badRequest();
+
+  const outcome = await requireOperator(context).operateAll(
+    scope,
+    operation,
+    targets,
+    requireSshRuntime(context),
+  );
+
+  const body: BatchOperationResult = {
+    target: scope,
+    operation,
+    results: outcome.records.map((record) => ({
+      target: record.target.id,
+      operation: record.operation,
+      result: toResultKind(record, 'batch'),
+    })),
+    summary: outcome.summary,
+  };
+
+  return jsonResponse(body);
+}
+
+/** JSON 応答を組み立てる。一覧画面の fetch/action は常に JSON を受ける。 */
+function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
     headers: {
@@ -631,6 +718,85 @@ function RecentRow({ record }: { record: HistoryRecord }) {
   );
 }
 
+/**
+ * 一括操作のボタンと結果表示（FR-11）。
+ *
+ * - 全台一括と、グループごとの一括で共通に使う。`scope` を hidden で送る。
+ * - 停止は対象の表示名を列挙した確認を 1 回だけ出し、拒否時は送信しない（SEC-07）。
+ * - 結果は対象ごとの種別と「n 件成功 / m 件失敗 / k 件スキップ」の要約を出す。
+ */
+function BatchControls({
+  scope,
+  targets,
+  names,
+}: {
+  scope: BatchOperationScope;
+  targets: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+  names: ReadonlyMap<string, string>;
+}) {
+  const fetcher = useFetcher<BatchOperationResult>();
+  const running = fetcher.state !== 'idle';
+  // 応答が前の要求のものかどうかは fetcher が持ち越さないため、直近の応答だけを出す。
+  const data = fetcher.data;
+
+  const submit = (
+    event: FormEvent<HTMLFormElement>,
+    operation: PowerOperation,
+  ) => {
+    event.preventDefault();
+    if (operation === 'shutdown') {
+      // 対象の表示名を列挙し、確認は 1 回だけ出す（FR-11, SEC-07）。
+      const listed = targets.map((target) => target.name).join('、');
+      if (!window.confirm(`次のサーバーを停止しますか: ${listed}`)) return;
+    }
+    fetcher.submit(event.currentTarget);
+  };
+
+  return (
+    <div>
+      {(['wake', 'shutdown'] as const).map((operation) => (
+        <form
+          key={operation}
+          method="post"
+          onSubmit={(event) => submit(event, operation)}
+        >
+          <input
+            type="hidden"
+            name="intent"
+            value={`${operation}-group`}
+          />
+          <input
+            type="hidden"
+            name="scope"
+            value={scope.type === 'all' ? 'all' : scope.id}
+          />
+          <button type="submit" disabled={running || targets.length === 0}>
+            {scope.type === 'all' ? '全台' : 'グループ'}
+            {operationLabels[operation]}
+          </button>
+        </form>
+      ))}
+      {running ? <span role="status">一括実行中</span> : null}
+      {running || data === undefined ? null : (
+        <div>
+          <p>
+            {data.summary.ok} 件成功 / {data.summary.failed} 件失敗 /{' '}
+            {data.summary.skipped} 件スキップ
+          </p>
+          <ul>
+            {data.results.map((result) => (
+              <li key={result.target}>
+                {names.get(result.target) ?? result.target}:{' '}
+                {resultLabels[result.result]}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard({ loaderData }: Route.ComponentProps) {
   const statusFetcher = useFetcher<StatusResponse>();
   const historyFetcher = useFetcher<HistoryResponse>();
@@ -639,10 +805,42 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
   const groupNames = new Map(
     loaderData.groups.map((group) => [group.id, group.name]),
   );
+  const serverNames = new Map(
+    loaderData.servers.map((server) => [server.id, server.name]),
+  );
+  // グループごとの見出しは、サーバーが 1 台以上所属するグループだけを定義順に出す。
+  const groupsWithServers = loaderData.groups
+    .map((group) => ({
+      group,
+      servers: loaderData.servers.filter((server) =>
+        server.groups.includes(group.id),
+      ),
+    }))
+    .filter((entry) => entry.servers.length > 0);
 
   return (
     <section>
       <h2>サーバー一覧</h2>
+      {loaderData.servers.length === 0 ? null : (
+        <section aria-label="全台一括">
+          <h3>すべてのサーバー</h3>
+          <BatchControls
+            scope={{ type: 'all' }}
+            targets={loaderData.servers}
+            names={serverNames}
+          />
+        </section>
+      )}
+      {groupsWithServers.map(({ group, servers }) => (
+        <section key={group.id} aria-label={`グループ ${group.name}`}>
+          <h3>{group.name}</h3>
+          <BatchControls
+            scope={{ type: 'group', id: group.id }}
+            targets={servers}
+            names={serverNames}
+          />
+        </section>
+      ))}
       {loaderData.servers.length === 0 ? (
         <p>サーバーが登録されていません。</p>
       ) : (

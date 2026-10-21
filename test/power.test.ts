@@ -18,7 +18,9 @@ import {
   createPowerOperator,
   createShutdownOverSsh,
   parseMacAddress,
+  resolveBatchTargets,
   sendWakeOnLan,
+  summarizeBatchResults,
   type OperateServer,
   type PowerOperationRecord,
 } from '../app/lib/power.server.ts';
@@ -189,12 +191,13 @@ describe('createPowerOperator の排他制御', () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
     expect(operator.busyTargets().has('nas')).toBe(true);
 
-    const results = await operator.operateAll(
-      'storage',
+    const outcome = await operator.operateAll(
+      { type: 'group', id: 'storage' },
       'shutdown',
       [server, { ...server, id: 'builder' }],
       runtime,
     );
+    const results = outcome.records;
     // nas は busy、builder は実行される。
     const nas = results.find((r) => r.target.id === 'nas');
     const builder = results.find((r) => r.target.id === 'builder');
@@ -228,6 +231,127 @@ describe('createPowerOperator の排他制御', () => {
     );
     expect(record.result).toBe('succeeded');
     expect(operator.busyTargets().size).toBe(0);
+  });
+});
+
+describe('一括操作の対象集合と要約（FR-11）', () => {
+  const servers = [
+    { id: 'nas', groups: ['storage'] },
+    { id: 'test-01', groups: ['storage', 'test'] },
+    { id: 'builder', groups: ['test'] },
+    { id: 'lone', groups: [] },
+  ];
+
+  test('全台は定義順の全サーバーを返す', () => {
+    expect(
+      resolveBatchTargets(servers, { type: 'all' }).map((server2) => server2.id),
+    ).toEqual(['nas', 'test-01', 'builder', 'lone']);
+  });
+
+  test('グループは所属するサーバーだけを返す', () => {
+    expect(
+      resolveBatchTargets(servers, { type: 'group', id: 'storage' }).map(
+        (server2) => server2.id,
+      ),
+    ).toEqual(['nas', 'test-01']);
+  });
+
+  test('同じ ID が複数回現れても 1 回に畳む', () => {
+    // 検証はサーバー ID の集合内一意を保証しているが、対象集合の確定側でも畳む。
+    const duplicated = [servers[0]!, servers[0]!, servers[1]!];
+    expect(
+      resolveBatchTargets(duplicated, { type: 'all' }).map(
+        (server2) => server2.id,
+      ),
+    ).toEqual(['nas', 'test-01']);
+  });
+
+  test('所属グループの重複入力でも 1 台 1 回になる', () => {
+    // `docs/operations.md` 2.2 の重複排除はサーバー ID で行うため、
+    // `groups: ['storage', 'storage']` のような重複入力でも破綻しない。
+    const repeated = [{ id: 'nas', groups: ['storage', 'storage'] }];
+    expect(
+      resolveBatchTargets(repeated, { type: 'group', id: 'storage' }),
+    ).toHaveLength(1);
+  });
+
+  test('未知のグループ ID は空の集合になる', () => {
+    expect(
+      resolveBatchTargets(servers, { type: 'group', id: 'unknown' }),
+    ).toEqual([]);
+  });
+
+  test('結果を成功・失敗・スキップに数える', () => {
+    const outcomes: ReadonlyArray<
+      Pick<PowerOperationRecord, 'result' | 'code'>
+    > = [
+      { result: 'succeeded', code: null },
+      { result: 'succeeded', code: null },
+      { result: 'failed', code: 'operation_failed' },
+      { result: 'skipped', code: 'busy' },
+    ];
+    const records: ReadonlyArray<PowerOperationRecord> = outcomes.map(
+      (outcome, index) => ({
+        at: '2026-01-02T03:04:05.000Z',
+        target: { type: 'server', id: `s${index}` },
+        operation: 'wake',
+        ...outcome,
+      }),
+    );
+
+    expect(summarizeBatchResults(records)).toEqual({
+      ok: 2,
+      failed: 1,
+      skipped: 1,
+    });
+  });
+
+  test('部分失敗を全体の失敗に読み替えない（要約だけを返す）', async () => {
+    const operator = createPowerOperator({
+      runShutdown: (async (serverId: string) =>
+        serverId === 'test-01'
+          ? { result: 'failed', code: 'operation_failed' }
+          : { result: 'succeeded', code: null }) as OperateServer,
+    });
+
+    const outcome = await operator.operateAll(
+      { type: 'all' },
+      'shutdown',
+      [server, { ...server, id: 'test-01' }],
+      runtime,
+    );
+
+    expect(outcome.records).toHaveLength(2);
+    expect(outcome.summary).toEqual({ ok: 1, failed: 1, skipped: 0 });
+  });
+
+  test('一括の同時実行数は 8 を超えない（NFR-07）', async () => {
+    let running = 0;
+    let peak = 0;
+    const operator = createPowerOperator({
+      runShutdown: (async () => {
+        running += 1;
+        peak = Math.max(peak, running);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        running -= 1;
+        return { result: 'succeeded' as const, code: null };
+      }) as OperateServer,
+    });
+
+    const targets = Array.from({ length: 12 }, (_unused, index) => ({
+      ...server,
+      id: `server-${index}`,
+    }));
+    const outcome = await operator.operateAll(
+      { type: 'all' },
+      'shutdown',
+      targets,
+      runtime,
+    );
+
+    expect(outcome.records).toHaveLength(12);
+    expect(outcome.summary).toEqual({ ok: 12, failed: 0, skipped: 0 });
+    expect(peak).toBeLessThanOrEqual(8);
   });
 });
 

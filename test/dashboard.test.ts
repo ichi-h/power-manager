@@ -19,6 +19,8 @@ import {
 import { operatorContext } from '../app/lib/operator-context.server.ts';
 import { parseManagedConfig } from '../app/lib/runtime-config.server.ts';
 import type {
+  BatchOperationOutcome,
+  BatchOperationScope,
   PowerOperationRecord,
   StatusChecker,
 } from '../app/lib/power.server.ts';
@@ -153,50 +155,75 @@ describe('一覧画面の loader', () => {
   });
 });
 
-describe('一覧画面の action', () => {
-  /** action の引数を作る。操作器は記録だけを返す偽物にする。 */
-  function actionArgs(fields: Record<string, string | undefined>) {
-    const operate = vi.fn(
-      async (
-        serverId: string,
-        _target: unknown,
-        operation: 'wake' | 'shutdown',
-        _server: unknown,
-        _runtime: unknown,
-        _options?: unknown,
-      ): Promise<PowerOperationRecord> => ({
-        at: '2026-01-02T03:04:05.000Z',
-        target: { type: 'server', id: serverId },
-        operation,
-        result: 'succeeded',
-        code: null,
-      }),
-    );
+/**
+ * action の引数を作る。操作器は記録だけを返す偽物にする。
+ *
+ * `operateAll` を渡すと一括操作の応答を差し替えられる（既定は空の対象集合）。
+ */
+function actionArgs(
+  fields: Record<string, string | undefined>,
+  options: {
+    operateAll?: (
+      scope: BatchOperationScope,
+      operation: 'wake' | 'shutdown',
+      targets: ReadonlyArray<{ readonly id: string }>,
+      runtime: unknown,
+    ) => Promise<BatchOperationOutcome>;
+    config?: Record<string, unknown>;
+  } = {},
+) {
+  const operate = vi.fn(
+    async (
+      serverId: string,
+      _target: unknown,
+      operation: 'wake' | 'shutdown',
+      _server: unknown,
+      _runtime: unknown,
+      _options?: unknown,
+    ): Promise<PowerOperationRecord> => ({
+      at: '2026-01-02T03:04:05.000Z',
+      target: { type: 'server', id: serverId },
+      operation,
+      result: 'succeeded',
+      code: null,
+    }),
+  );
 
-    const context = loaderContext({});
-    context.set(operatorContext, {
-      operate,
-      operateAll: async () => [],
-      busyTargets: () => new Set<string>(),
-      reset: () => {},
-    });
+  // 呼び出し内容（対象集合・並び順）を確かめられるよう、常にモックで包む。
+  const operateAll = vi.fn(
+    options.operateAll ??
+      (async () => ({
+        records: [],
+        summary: { ok: 0, failed: 0, skipped: 0 },
+      })),
+  );
 
-    const body = new FormData();
-    for (const [key, value] of Object.entries(fields)) {
-      if (value !== undefined) body.set(key, value);
-    }
+  const context = loaderContext({ config: options.config });
+  context.set(operatorContext, {
+    operate,
+    operateAll,
+    busyTargets: () => new Set<string>(),
+    reset: () => {},
+  });
 
-    return {
-      operate,
-      context,
-      args: {
-        context,
-        params: {},
-        request: new Request('http://localhost/', { method: 'POST', body }),
-      } as never,
-    };
+  const body = new FormData();
+  for (const [key, value] of Object.entries(fields)) {
+    if (value !== undefined) body.set(key, value);
   }
 
+  return {
+    operate,
+    operateAll,
+    context,
+    args: {
+      context,
+      params: {},
+      request: new Request('http://localhost/', { method: 'POST', body }),
+    } as never,
+  };
+}
+
+describe('一覧画面の action', () => {
   test('intent と対象を操作器へ渡し、結果種別と対象だけを返す', async () => {
     const { operate, args } = actionArgs({ intent: 'shutdown', target: 'nas' });
 
@@ -234,6 +261,19 @@ describe('一覧画面の action', () => {
     }
   });
 
+  test('一括操作は busy もスキップへ畳み込む（FR-11）', () => {
+    // 単体操作の busy は「拒否」だが、一括では対象から外したことを「スキップ」と出す。
+    expect(toResultKind({ result: 'skipped', code: 'busy' }, 'batch')).toBe(
+      'skipped',
+    );
+    expect(toResultKind({ result: 'failed', code: 'operation_failed' }, 'batch')).toBe(
+      'failed',
+    );
+    expect(toResultKind({ result: 'succeeded', code: null }, 'batch')).toBe(
+      'succeeded',
+    );
+  });
+
   test('実行中（busy）は「実行中（拒否）」へ畳み込む', () => {
     expect(toResultKind({ result: 'failed', code: 'busy' })).toBe('rejected');
     // 単体操作の busy は操作器が {result:'skipped', code:'busy'} を返す
@@ -243,6 +283,142 @@ describe('一覧画面の action', () => {
       'failed',
     );
     expect(toResultKind({ result: 'succeeded', code: null })).toBe('succeeded');
+  });
+});
+
+describe('一括操作の action', () => {
+  test('グループ一括は対象を ID で重複排除し、対象ごとの結果と要約を返す', async () => {
+    const { operateAll, args } = actionArgs(
+      { intent: 'shutdown-group', scope: 'storage' },
+      {
+        operateAll: async (_scope, operation, targets) => ({
+          records: targets.map((target) => ({
+            at: '2026-01-02T03:04:05.000Z',
+            target: { type: 'server' as const, id: target.id },
+            operation,
+            result: 'succeeded' as const,
+            code: null,
+          })),
+          summary: { ok: targets.length, failed: 0, skipped: 0 },
+        }),
+      },
+    );
+
+    const response = (await action(args)) as Response;
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      target: { type: 'group', id: 'storage' },
+      operation: 'shutdown',
+      results: [
+        { target: 'nas', operation: 'shutdown', result: 'succeeded' },
+        { target: 'test-01', operation: 'shutdown', result: 'succeeded' },
+      ],
+      summary: { ok: 2, failed: 0, skipped: 0 },
+    });
+
+    expect(operateAll).toHaveBeenCalledTimes(1);
+    const [scope, operation, targets, runtime] = operateAll.mock.calls[0]!;
+    expect(scope).toEqual({ type: 'group', id: 'storage' });
+    expect(operation).toBe('shutdown');
+    expect(
+      targets.map((target: { readonly id: string }) => target.id),
+    ).toEqual(['nas', 'test-01']);
+    // 秘密値は応答に含めず、load context から操作器へ渡す（SEC-05）。
+    expect(runtime).toEqual({
+      sshIdentityFile: '/run/secrets/id_ed25519',
+      sshKnownHostsFile: '/etc/power-manager/known_hosts',
+    });
+  });
+
+  test('全台一括は scope=all で全サーバーを対象にする', async () => {
+    const { operateAll, args } = actionArgs(
+      { intent: 'wake-group', scope: 'all' },
+      {
+        operateAll: async () => ({
+          records: [],
+          summary: { ok: 0, failed: 2, skipped: 0 },
+        }),
+      },
+    );
+
+    const response = (await action(args)) as Response;
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      target: unknown;
+      operation: string;
+      summary: unknown;
+    };
+    expect(body.target).toEqual({ type: 'all' });
+    expect(body.operation).toBe('wake');
+    // 部分失敗でも全体を失敗（500 等）に読み替えず、要約で示す。
+    expect(body.summary).toEqual({ ok: 0, failed: 2, skipped: 0 });
+    expect(operateAll).toHaveBeenCalledTimes(1);
+    expect(operateAll.mock.calls[0]?.[0]).toEqual({ type: 'all' });
+    expect(
+      operateAll.mock.calls[0]?.[2].map(
+        (target: { readonly id: string }) => target.id,
+      ),
+    ).toEqual(['nas', 'test-01']);
+  });
+
+  test('busy の対象は skipped として要約に数える', async () => {
+    const { args } = actionArgs(
+      { intent: 'shutdown-group', scope: 'test' },
+      {
+        operateAll: async (_scope, operation) => ({
+          records: [
+            {
+              at: '2026-01-02T03:04:05.000Z',
+              target: { type: 'server' as const, id: 'test-01' },
+              operation,
+              result: 'skipped' as const,
+              code: 'busy' as const,
+            },
+          ],
+          summary: { ok: 0, failed: 0, skipped: 1 },
+        }),
+      },
+    );
+
+    const body = (await (await action(args))!.json()) as {
+      results: ReadonlyArray<{ result: string }>;
+      summary: unknown;
+    };
+    // 一括の busy は「拒否」ではなく「スキップ」と出す（FR-11）。
+    expect(body.results).toEqual([
+      { target: 'test-01', operation: 'shutdown', result: 'skipped' },
+    ]);
+    expect(body.summary).toEqual({ ok: 0, failed: 0, skipped: 1 });
+  });
+
+  test('未知のグループ・scope 欠落・未知の intent は操作せず 400 を返す', async () => {
+    const cases: ReadonlyArray<Record<string, string | undefined>> = [
+      { intent: 'wake-group', scope: 'unknown-group' },
+      { intent: 'shutdown-group' },
+      { intent: 'reboot-group', scope: 'all' },
+    ];
+
+    for (const fields of cases) {
+      const { operateAll, args } = actionArgs(fields);
+      const response = (await action(args)) as Response;
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: 'invalid_request' });
+      expect(operateAll).not.toHaveBeenCalled();
+    }
+  });
+
+  test('対象が 0 台の一括は操作せず 400 を返す', async () => {
+    const empty = twoServerConfig();
+    empty.servers = [];
+    empty.groups = [];
+    const { operateAll, args } = actionArgs(
+      { intent: 'wake-group', scope: 'all' },
+      { config: empty as never },
+    );
+
+    const response = (await action(args)) as Response;
+    expect(response.status).toBe(400);
+    expect(operateAll).not.toHaveBeenCalled();
   });
 });
 
