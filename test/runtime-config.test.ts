@@ -1,43 +1,38 @@
 import { describe, expect, test } from "vitest";
 
-import {
-  ManagedConfigError,
-  managedConfigSchema,
-  parseManagedConfig,
-} from "../app/lib/runtime-config.server.ts";
+import { ManagedConfigError, parseManagedConfig } from "../app/lib/runtime-config.server.ts";
 
-/** 検証を通る最小の定義。個々のテストはここから 1 か所だけ壊す。 */
+import { validManagedConfig } from "./support/managed-config.ts";
+
+/**
+ * 検証を通る定義。個々のテストはここから 1 か所だけ壊す。
+ * 雛形は `test/support/managed-config.ts` の 1 つだけを使う。
+ */
 function validConfig(): Record<string, unknown> {
-  return {
-    version: 2,
-    servers: [
-      {
-        id: "nas",
-        name: "NAS",
-        groups: ["storage"],
-        macAddress: "00:11:22:33:44:55",
-        ssh: {
-          host: "nas.example.internal",
-          user: "power-manager",
-          shutdownCommand: "sudo systemctl poweroff",
-        },
-      },
-    ],
-    groups: [{ id: "storage", name: "ストレージ" }],
-    schedules: [],
-  };
+  return validManagedConfig();
 }
 
-/** 検証エラーの指摘を 1 本の文字列にして、`toContain` で見る。 */
+/**
+ * 検証エラーの指摘を 1 本の文字列にして `toContain` で見る。
+ * 利用者に見える `ManagedConfigError.issues` をそのまま使う（別実装を挟まない）。
+ */
 function issuesOf(input: unknown): string {
-  const parsed = managedConfigSchema.safeParse(input);
-  if (parsed.success) throw new Error("検証を通ってしまいました");
-  return parsed.error.issues.map((issue) => `${issue.path.map(String).join(".")}: ${issue.message}`).join(" / ");
+  try {
+    parseManagedConfig(input);
+  } catch (error) {
+    if (error instanceof ManagedConfigError) return error.issues.join(" / ");
+    throw error;
+  }
+  throw new Error("検証を通ってしまいました");
 }
 
 describe("設定 JSON のスキーマ", () => {
   test("既定値を適用する（groups、wol.broadcastAddress、wol.port、ssh.port）", () => {
-    const config = parseManagedConfig(validConfig());
+    const input = validConfig();
+    // `wol` を省略した定義でも既定値が入る。
+    delete (input.servers as Record<string, unknown>[])[0]!.wol;
+
+    const config = parseManagedConfig(input);
     const server = config.servers[0];
 
     expect(server?.groups).toEqual(["storage"]);
@@ -165,22 +160,49 @@ describe("設定 JSON のスキーマ", () => {
     expect(issuesOf(input)).toContain("servers.0.wol.broadcastAddress: IPv4 アドレス");
   });
 
-  test("ポート番号の範囲を検証する", () => {
-    const input = validConfig();
-    (input.servers as Record<string, unknown>[])[0]!.ssh = {
-      host: "nas.example.internal",
-      user: "power-manager",
-      shutdownCommand: "sudo systemctl poweroff",
-      port: 70000,
-    };
+  test("ポート番号は 1 から 65535 の整数だけを受け付ける", () => {
+    // 境界値そのものは受理し、外側だけを拒否する。
+    for (const port of [1, 65535]) {
+      const input = validConfig();
+      (input.servers as Record<string, unknown>[])[0]!.wol = { port };
 
-    expect(issuesOf(input)).toContain("servers.0.ssh.port: 1 から 65535 の整数で指定してください");
+      expect(parseManagedConfig(input).servers[0]?.wol.port).toBe(port);
+    }
+
+    for (const port of [0, 65536]) {
+      const input = validConfig();
+      (input.servers as Record<string, unknown>[])[0]!.wol = { port };
+
+      expect(issuesOf(input)).toContain("servers.0.wol.port: 1 から 65535 の整数で指定してください");
+    }
+
+    // 小数は範囲ではなく整数性の指摘になる（直し方が違う）。
+    const decimal = validConfig();
+    (decimal.servers as Record<string, unknown>[])[0]!.wol = { port: 9.5 };
+    expect(issuesOf(decimal)).toContain("servers.0.wol.port: 整数で指定してください");
   });
 
-  test("ポート番号は文字列や小数を受け付けない", () => {
+  test("ポート番号は文字列を受け付けない", () => {
     const input = validConfig();
     (input.servers as Record<string, unknown>[])[0]!.wol = { port: "9" };
 
     expect(issuesOf(input)).toContain("servers.0.wol.port: 数値で指定してください");
+  });
+
+  test("ルート直下の必須項目の欠落を拒否する", () => {
+    const onlyVersion = validConfig();
+    delete onlyVersion.servers;
+    delete onlyVersion.groups;
+    delete onlyVersion.schedules;
+    expect(issuesOf(onlyVersion)).toContain("servers: 必須です");
+    expect(issuesOf(onlyVersion)).toContain("groups: 必須です");
+    expect(issuesOf(onlyVersion)).toContain("schedules: 必須です");
+
+    expect(issuesOf({ ...validConfig(), servers: {} })).toContain(
+      "servers: 配列で指定してください",
+    );
+    expect(issuesOf({ ...validConfig(), servers: null })).toContain(
+      "servers: 配列で指定してください",
+    );
   });
 });

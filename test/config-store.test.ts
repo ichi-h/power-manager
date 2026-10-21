@@ -8,7 +8,6 @@ import {
   createConfigStore,
   loadManagedConfigForStartup,
 } from "../app/lib/config-store.server.ts";
-import { parseManagedConfig } from "../app/lib/runtime-config.server.ts";
 
 import { validManagedConfig, validSchedule } from "./support/managed-config.ts";
 
@@ -188,12 +187,20 @@ describe("再読込", () => {
     ]);
   });
 
-  test("検証済みの設定を候補として渡すと、そのまま有効設定になる", async () => {
-    const candidate = parseManagedConfig(validManagedConfig());
-    const isolated = createConfigStore(configPath, candidate, async () => candidate);
+  test("再読込は渡された設定のパスを読み直す", async () => {
+    const initial = await loadManagedConfigForStartup(configPath);
+    const passedPaths: string[] = [];
+    // 注入した load が検証済みの値をそのまま返すと、検証の有無を確かめられない。
+    // ここでは「どのパスを読みに行くか」だけを固定する。
+    const isolated = createConfigStore(configPath, initial, async (path) => {
+      passedPaths.push(path);
+      throw new Error("読み込み失敗");
+    });
 
-    await isolated.reload();
+    const result = await isolated.reload();
 
-    expect(isolated.current()).toBe(candidate);
+    expect(passedPaths).toEqual([configPath]);
+    expect(result.ok).toBe(false);
+    expect(isolated.current()).toBe(initial);
   });
 });

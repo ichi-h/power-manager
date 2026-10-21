@@ -24,13 +24,19 @@ vi.mock("node:fs", async (importOriginal) => {
  * 起動検証はファイルの実在に依存させたくない（鍵ファイルの存在は起動要件に含めない
  * のと同じ理由）。`node:fs/promises` の `readFile` はここで置き換える。
  */
-const configFile = vi.hoisted(() => ({ content: "" as string, error: null as Error | null }));
+const configFile = vi.hoisted(() => ({
+  content: "" as string,
+  error: null as Error | null,
+  /** `readFile` に渡されたパス。起動経路が設定のパスを読んでいることを確かめる。 */
+  paths: [] as string[],
+}));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
-    readFile: async () => {
+    readFile: async (path: string) => {
+      configFile.paths.push(path);
       if (configFile.error) throw configFile.error;
       return configFile.content;
     },
@@ -61,6 +67,7 @@ beforeEach(() => {
   writtenToStderr.length = 0;
   configFile.content = JSON.stringify(validManagedConfig());
   configFile.error = null;
+  configFile.paths.length = 0;
 });
 
 describe("起動要件", () => {
@@ -126,6 +133,8 @@ describe("startRuntime", () => {
 
     expect(exit).not.toHaveBeenCalled();
     expect(startup.runtime.publicOrigin).toBe("https://power.example.ts.net");
+    // 環境変数で検証したパスをそのまま読む（既定パスを読み直さない）。
+    expect(configFile.paths).toEqual([validEnvironment().POWER_MANAGER_CONFIG_PATH]);
     expect(startup.configStore.current().version).toBe(2);
     expect(writtenToStderr).toEqual([]);
   });
