@@ -25,9 +25,6 @@ export const checkTimeoutMs = 5_000;
 /** 死活確認の同時実行数上限。固定とし設定項目にしない（NFR-08）。 */
 const checkConcurrency = 8;
 
-/** WOL パケット送信のタイムアウト（ミリ秒）。送信 API の成否のみを成功とする（FR-04, NFR-07）。 */
-export const wolTimeoutMs = 5_000;
-
 /** SSH 停止コマンド実行のタイムアウト（ミリ秒）。終了コード 0 を成功とする（FR-05, NFR-07）。 */
 export const sshTimeoutMs = 30_000;
 
@@ -89,20 +86,11 @@ export function createMagicPacket(macAddress: string): Uint8Array | null {
 }
 
 /**
- * WOL の 1 回分の実行単位。テストで `socket` の作り方を差し替えられるようにする。
- */
-type SendUdp = (
-  packet: Uint8Array,
-  port: number,
-  address: string,
-  timeoutMs: number,
-) => Promise<void>;
-
-/**
  * UDP ソケットを 1 つ開き、`send` の成否を `Promise` で返す。
  *
- * ephemeral ポートで開き、送信後に閉じる。`send` が失敗しても `close` は行う。
- * ソケット作成・`bind` 失敗は `operation_failed` として扱う。
+ * ephemeral ポートで開き、`setBroadcast(true)`（SO_BROADCAST）を設定してからブロード
+ * キャストアドレス宛の送信に備える。送信後に閉じる。`send` が失敗しても `close` は行う。
+ * ソケット作成・`bind`・`setBroadcast` の失敗は `operation_failed` として扱う。
  */
 async function createDefaultSocket(): Promise<{
   send: (packet: Uint8Array, port: number, address: string) => Promise<void>;
@@ -118,6 +106,14 @@ async function createDefaultSocket(): Promise<{
     socket!.once("error", reject);
     socket!.bind(0, () => {
       socket!.removeListener("error", reject);
+      // ブロードキャストアドレス宛の送信には SO_BROADCAST が要る。設定に失敗したら
+      // `bind` 失敗と同じく `null` を返して `operation_failed` 扱いにする。
+      try {
+        socket!.setBroadcast(true);
+      } catch {
+        reject(new Error("setBroadcast failed"));
+        return;
+      }
       resolve();
     });
   });
@@ -138,17 +134,24 @@ async function createDefaultSocket(): Promise<{
 }
 
 /**
- * WOL Magic Packet を UDP で送る。
- *
- * `send` が成功した時点で成功とする。OS の起動完了は待たない（FR-04）。上限 5 秒
- * （NFR-07）。テストで送信単位を差し替えられるように `send` 関数を受け取れる形に
- * する。
+ * IPv4 アドレス（ドット区切り 4 分節、各 0〜255）として検査する。
  */
+function isIPv4(address: string): boolean {
+  const parts = address.split(".");
+  if (parts.length !== 4) return false;
+  return parts.every((part) => {
+    if (!/^\d{1,3}$/.test(part)) return false;
+    const value = Number.parseInt(part, 10);
+    return value >= 0 && value <= 255;
+  });
+}
+
 /**
  * WOL Magic Packet を UDP で送る。
  *
- * `send` が成功した時点で成功とする。OS の起動完了は待たない（FR-04）。上限 5 秒
- * （NFR-07）。
+ * `send` が成功した時点で成功とする。OS の起動完了は待たない（FR-04）。UDP 送信は補機
+ * の受信を保証しないため、送信 API の成否だけを成功とし、秒数上限は設けない（NFR-07 の
+ * 上限は TCP 死活確認・SSH 停止にのみ適用する）。
  */
 export async function sendWakeOnLan(
   macAddress: string,
@@ -156,7 +159,12 @@ export async function sendWakeOnLan(
   port: number,
 ): Promise<SingleOperationOutcome> {
   const packet = createMagicPacket(macAddress);
-  if (packet === null) {
+  // 設定ストアは検証済みとはいえ、ここは送信先を確定させる最後の関所なので検査して
+  // 不正値は `invalid_configuration` に分類する。
+  if (packet === null || !isIPv4(broadcastAddress)) {
+    return { result: "failed", code: "invalid_configuration" };
+  }
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
     return { result: "failed", code: "invalid_configuration" };
   }
   const socketResult = await createDefaultSocket();
@@ -216,6 +224,7 @@ export function createShutdownOverSsh(
       const settle = (outcome: SingleOperationOutcome) => {
         if (settled) return;
         settled = true;
+        clearTimeout(timer);
         resolve(outcome);
       };
       const child = spawn(sshBinary, args, { stdio: "ignore" });
@@ -248,7 +257,7 @@ export function createShutdownOverSsh(
  * 進行中の死活確認の単位。
  *
  * `error` は TCP 接続の失敗理由。判定は接続成否だけで行うため、内容は分岐に使わない。
- * 成功でも失敗でも `ServerState` ぽ返す。
+ * 成功でも失敗でも `ServerState` に畳めて返す。
  */
 type InFlightCheck = Promise<ServerState>;
 function checkOnce(host: string, port: number): Promise<ServerState> {
