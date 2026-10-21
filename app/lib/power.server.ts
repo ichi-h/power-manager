@@ -17,8 +17,8 @@ import { connect } from "node:net";
 
 import type { ServerState } from "./model.ts";
 
-/** 死活確認 1 件あたりのタイムアウト（秒）。タイムアウトは `offline` とする（NFR-07）。 */
-const checkTimeoutMs = 5_000;
+/** 死活確認 1 件あたりのタイムアウト（ミリ秒）。タイムアウトは `offline` とする（NFR-07）。 */
+export const checkTimeoutMs = 5_000;
 
 /** 死活確認の同時実行数上限。固定とし設定項目にしない（NFR-08）。 */
 const checkConcurrency = 8;
@@ -30,27 +30,19 @@ const checkConcurrency = 8;
  * 成功でも失敗でも `ServerState` へ畳めて返す。
  */
 type InFlightCheck = Promise<ServerState>;
-
 function checkOnce(host: string, port: number): Promise<ServerState> {
   return createTcpCheck(checkTimeoutMs)(host, port);
 }
 
 /**
- * テスト用: TCP 接続の単位を直接呼ぶ。本番コードからは呼ばない。
- */
-export const __testCheckOnce = checkOnce;
-
-/** テスト用: タイムアウト値を指定して確認単位を作る。本番コードからは呼ばない。 */
-export const __testCreateTcpCheck = createTcpCheck;
-
-/**
  * TCP 接続で死活を確認する。
  *
  * 接続が成立した時点で `online` を返し、ソケットは即座に閉じる。失敗・タイムアウトは
- * `offline` とする（FR-03, NFR-07）。タイムアウト値を引数で受けられるのはテストのため
- * だけである。実運用は 5 秒固定の `checkOnce` を使う。
+ * `offline` とする（FR-03, NFR-07）。タイムアウト値を引数で受けられるのは、短い値で
+ * 打ち切る検証を書けるようにするためだけである。実運用は 5 秒固定の `checkOnce` を
+ * 使う。
  */
-function createTcpCheck(timeoutMs: number) {
+export function createTcpCheck(timeoutMs: number) {
   return function checkOnce(host: string, port: number): Promise<ServerState> {
     return new Promise((resolve) => {
       // `connect` はエラーを `error` イベントで渡す。ハンドラを付けないと例外が
@@ -65,6 +57,8 @@ function createTcpCheck(timeoutMs: number) {
       };
 
       const timeout = setTimeout(() => finish("offline"), timeoutMs);
+      // ソケットの待ち受けだけでは打ち切れない環境でイベントループを保持しない。
+      timeout.unref?.();
 
       socket.once("connect", () => finish("online"));
       socket.once("error", () => finish("offline"));
@@ -86,6 +80,11 @@ export type StatusChecker = {
    *
    * 同一対象の確認が進行中なら、その Promise を共有して待つ。新規ならセマフォを通して
    * TCP 接続を 1 本開く。
+   *
+   * 進行中 Promise の共有は `serverId` のみで照合する。確認中に設定の差し替えで
+   * `host` / `port` が変わっても、進行中の確認は開始時の接続先で最後まで完走し、新しい
+   * 接続先は完了後の次回確認から反映される。移行窓の最大幅は 1 確認分（5 秒上限）で、
+   * その間の状態判定は古い接続先の結果になる。
    */
   check(serverId: string, host: string, port: number): Promise<ServerState>;
   /**
@@ -103,7 +102,8 @@ export type StatusChecker = {
 /**
  * 死活確認器を作る。
  *
- * 実行の単位を差し替えられるのはテストのためだけである（実運用は `checkOnce`）。
+ * 実行の単位 `run` を差し替えられるのはテストのためだけである（実運用は既定の
+ * `checkOnce`）。テストでは即応答のモックを `run` に渡して確認器の挙動だけを検証する。
  */
 export function createStatusChecker(
   run: (host: string, port: number) => Promise<ServerState> = checkOnce,
@@ -129,33 +129,49 @@ export function createStatusChecker(
   /** 対象 ID ごとの進行中 Promise。完了時に破棄する。 */
   const inFlight = new Map<string, InFlightCheck>();
 
+  /**
+   * 1 台の死活を確認する。`checkAll` からもこのクロージャ経由で呼ぶ。
+   *
+   * `StatusChecker.check` と同じ挙動で、メソッド呼び出し形式の `this` に依存しない。
+   */
+  const check = async (
+    serverId: string,
+    host: string,
+    port: number,
+  ): Promise<ServerState> => {
+    const shared = inFlight.get(serverId);
+    if (shared) return shared;
+
+    const entry: { promise?: InFlightCheck } = {};
+    const promise: InFlightCheck = (async () => {
+      await acquire();
+      try {
+        return await run(host, port);
+      } finally {
+        release();
+        // 完了時に破棄するため、未完了の確認が次周期に重複登録されることはない。
+        if (inFlight.get(serverId) === entry.promise) inFlight.delete(serverId);
+      }
+    })();
+    entry.promise = promise;
+    inFlight.set(serverId, promise);
+    return promise;
+  };
+
   return {
     async check(serverId: string, host: string, port: number) {
-      const shared = inFlight.get(serverId);
-      if (shared) return shared;
-
-      const entry: { promise?: InFlightCheck } = {};
-      const promise: InFlightCheck = (async () => {
-        await acquire();
-        try {
-          return await run(host, port);
-        } finally {
-          release();
-          // 完了時に破棄するため、未完了の確認が次周期に重複登録されることはない。
-          if (inFlight.get(serverId) === entry.promise) inFlight.delete(serverId);
-        }
-      })();
-      entry.promise = promise;
-      inFlight.set(serverId, promise);
-      return promise;
+      return check(serverId, host, port);
     },
 
     async checkAll(servers) {
       const entries = await Promise.all(
-        servers.map(async (server) => [
-          server.id,
-          await this.check(server.id, server.ssh.host, server.ssh.port),
-        ] as const),
+        servers.map(
+          async (server) =>
+            [
+              server.id,
+              await check(server.id, server.ssh.host, server.ssh.port),
+            ] as const,
+        ),
       );
       return new Map(entries);
     },
