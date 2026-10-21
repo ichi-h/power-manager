@@ -17,7 +17,7 @@ import { spawn } from "node:child_process";
 import { connect } from "node:net";
 import { createSocket } from "node:dgram";
 
-import type { ServerState } from "./model.ts";
+import type { PowerOperation, ServerState, Target } from "./model.ts";
 
 /** 死活確認 1 件あたりのタイムアウト（ミリ秒）。タイムアウトは `offline` とする（NFR-07）。 */
 export const checkTimeoutMs = 5_000;
@@ -403,3 +403,255 @@ export function createStatusChecker(
     },
   };
 }
+
+/**
+ * 電源操作の実行結果（`docs/architecture.md` 6.6）。リングバッファの要素の型。
+ *
+ * `scheduleId` は予約実行時だけを持つ。`group` は一括操作時にだけ持つ。
+ */
+export type PowerOperationRecord = {
+  readonly at: string;
+  readonly scheduleId?: string;
+  readonly target: Target;
+  readonly operation: PowerOperation;
+  readonly result: PowerResult;
+  readonly code: PowerOperationCode | null;
+  readonly group?: string;
+};
+
+/**
+ * 電源操作の実行を排他する器（FR-06）。
+ *
+ * 対象 ID ごとの実行中フラグで排他する。実行中の対象への操作は `busy` として拒否する。
+ * 一括操作は busy の対象を `skipped` として除外し、残りを継続する（FR-11）。
+ *
+ * 実行結果は `onRecord` コールバックへ渡す（リングバッファへの登録・ログ出力は呼び出
+ * 側の責務）。テストでは `onRecord` を差し替えて結果の記録だけを検証できる。
+ *
+ * 実行の単位（`wake` / `shutdown` の実体）を注入できるのはテストのためだけである
+ * （実運用は既定の WOL 送信・SSH 停止）。
+ */
+export type PowerOperator = {
+  /**
+   * 1 台への電源操作を実行する。
+   *
+   * 実行中なら `busy` を返す（拒否）。実行後は必ずフラグを下ろす。
+   */
+  operate(
+    serverId: string,
+    target: Target,
+    operation: PowerOperation,
+    server: {
+      readonly macAddress: string;
+      readonly wol: {
+        readonly broadcastAddress: string;
+        readonly port: number;
+      };
+      readonly ssh: {
+        readonly host: string;
+        readonly port: number;
+        readonly user: string;
+        readonly shutdownCommand: string;
+      };
+    },
+    runtime: {
+      readonly sshIdentityFile: string;
+      readonly sshKnownHostsFile: string;
+    },
+    options?: { readonly scheduleId?: string },
+  ): Promise<PowerOperationRecord>;
+  /**
+   * 複数台へ一括で電源操作を実行する（FR-11）。
+   *
+   * busy の対象を `skipped` として除外し、残りは継続する。実行は並列度 8 に抑える。
+   */
+  operateAll(
+    groupId: string,
+    operation: PowerOperation,
+    servers: ReadonlyArray<{
+      readonly id: string;
+      readonly macAddress: string;
+      readonly wol: {
+        readonly broadcastAddress: string;
+        readonly port: number;
+      };
+      readonly ssh: {
+        readonly host: string;
+        readonly port: number;
+        readonly user: string;
+        readonly shutdownCommand: string;
+      };
+    }>,
+    runtime: {
+      readonly sshIdentityFile: string;
+      readonly sshKnownHostsFile: string;
+    },
+  ): Promise<ReadonlyArray<PowerOperationRecord>>;
+  /** 現在実行中の対象 ID 一覧。テストで排他状態を確認するためにだけ公開する。 */
+  busyTargets(): ReadonlySet<string>;
+  /** 進行中の操作を破棄する。テストの後始末以外に呼ぶ必要はない。 */
+  reset(): void;
+};
+
+/**
+ * 単体操作の実行単位。テストでモックに差し替えられるようにするためだけに分ける。
+ */
+export type OperateServer = (
+  serverId: string,
+  target: Target,
+  operation: PowerOperation,
+  server: {
+    readonly macAddress: string;
+    readonly wol: { readonly broadcastAddress: string; readonly port: number };
+    readonly ssh: {
+      readonly host: string;
+      readonly port: number;
+      readonly user: string;
+      readonly shutdownCommand: string;
+    };
+  },
+  runtime: {
+    readonly sshIdentityFile: string;
+    readonly sshKnownHostsFile: string;
+  },
+) => Promise<SingleOperationOutcome>;
+/**
+ * 電源操作器を作る。
+ *
+ * - `runWake` / `runShutdown` はテストで差し替えられるように引数で受ける。実運用は
+ *   既定の WOL 送信（`sendWakeOnLan`）・SSH 停止（`createShutdownOverSsh`）を使う。
+ * - 結果の記録は `onRecord` で受ける。実運用はリングバッファへの追加と 1 行 JSON
+ *   ログ（`docs/architecture.md` 7.1）の両方を行う。`onRecord` が例外を投げても操作の
+ *   成否には影響させない。
+ */
+export function createPowerOperator(
+  options: {
+    readonly sshBinary?: string;
+    readonly onRecord?: (record: PowerOperationRecord) => void;
+    readonly runWake?: (
+      macAddress: string,
+      broadcastAddress: string,
+      port: number,
+    ) => Promise<SingleOperationOutcome>;
+    readonly runShutdown?: OperateServer;
+  } = {},
+): PowerOperator {
+  const { sshBinary = "ssh", onRecord = () => {} } = options;
+  const shutdown: OperateServer =
+    options.runShutdown ??
+    (async (_serverId, _target2, _operation, server, runtime) =>
+      createShutdownOverSsh(sshBinary)({ ssh: server.ssh, runtime }));
+  const runWake =
+    options.runWake ??
+    (async (macAddress, broadcastAddress, port) =>
+      sendWakeOnLan(macAddress, broadcastAddress, port));
+
+  /** 対象 ID ごとの実行中フラグ。 */
+  const busy = new Set<string>();
+  /** 同時実行数 8 のセマフォ。 */
+  let active = 0;
+  const waiting: Array<() => void> = [];
+
+  const acquire = async (): Promise<void> => {
+    if (active < operationConcurrency) {
+      active += 1;
+      return;
+    }
+    await new Promise<void>((resolve) => waiting.push(resolve));
+    active += 1;
+  };
+
+  const release = () => {
+    active -= 1;
+    waiting.shift()?.();
+  };
+
+  /**
+   * 1 台への操作。排他の取得・解除と結果の記録をここで行う。
+   */
+  const operateOne = async (
+    serverId: string,
+    target: Target,
+    operation: PowerOperation,
+    server: Parameters<OperateServer>[3],
+    runtime: Parameters<OperateServer>[4],
+    options2?: { readonly scheduleId?: string; readonly group?: string },
+  ): Promise<PowerOperationRecord> => {
+    const record = (outcome: SingleOperationOutcome): PowerOperationRecord => ({
+      at: new Date().toISOString(),
+      ...(options2?.scheduleId === undefined
+        ? {}
+        : { scheduleId: options2.scheduleId }),
+      target,
+      operation,
+      result: outcome.result,
+      code: outcome.code,
+      ...(options2?.group === undefined ? {} : { group: options2.group }),
+    });
+    if (busy.has(serverId)) {
+      const skipped = record({
+        result: "skipped",
+        code: "busy",
+      } as SingleOperationOutcome);
+      onRecord(skipped);
+      return skipped;
+    }
+    busy.add(serverId);
+    let outcome: SingleOperationOutcome;
+    try {
+      await acquire();
+      try {
+        outcome =
+          operation === "wake"
+            ? await runWake(
+                server.macAddress,
+                server.wol.broadcastAddress,
+                server.wol.port,
+              )
+            : await shutdown(serverId, target, operation, server, runtime);
+      } finally {
+        release();
+      }
+    } finally {
+      // 成功・失敗を問わず、実行後は必ずフラグを下ろす（FR-06）。
+      busy.delete(serverId);
+    }
+    const done = record(outcome);
+    onRecord(done);
+    return done;
+  };
+
+  return {
+    async operate(serverId, target, operation, server, runtime, options) {
+      return operateOne(serverId, target, operation, server, runtime, options);
+    },
+
+    async operateAll(groupId, operation, servers, runtime) {
+      // 一括は busy の対象を除外し、残りを並列度 8 で実行する（FR-11）。
+      const records = await Promise.all(
+        servers.map(async (server) =>
+          operateOne(
+            server.id,
+            { type: "server", id: server.id },
+            operation,
+            server,
+            runtime,
+            { group: groupId },
+          ),
+        ),
+      );
+      return records;
+    },
+
+    busyTargets() {
+      return new Set(busy);
+    },
+
+    reset() {
+      busy.clear();
+    },
+  };
+}
+
+/** 一括電源操作の同時実行数上限（NFR-07, FR-11）。 */
+const operationConcurrency = 8;
