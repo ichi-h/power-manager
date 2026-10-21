@@ -58,9 +58,14 @@ function unauthorized(): Response {
 function parseBasicCredentials(header: string): { username: string; password: string } | null {
   if (!header.startsWith("Basic ")) return null;
 
+  // Base64 はバイト列を表す。`atob` は latin1 の 1:1 文字列化しかしないため
+  // マルチバイト UTF-8 の資格情報を壊す。TextDecoder で UTF-8 としてデコードする
+  // （RFC 7617 の既定文字集合は UTF-8）。
   let decoded: string;
   try {
-    decoded = atob(header.slice("Basic ".length));
+    const bytes = Uint8Array.from(atob(header.slice("Basic ".length)), (c) => c.charCodeAt(0));
+    // 不正な UTF-8 バイト列（ lone surrogate byte 等）もここで 401 に落とす。
+    decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
     return null;
   }
@@ -113,10 +118,13 @@ export async function authenticate(
   if (credentials === null) return unauthorized();
 
   const usernameMatches = credentials.username === runtime.authUsername;
-  // ユーザー名が一致しない場合も検証を呼ぶ。早期リターンすると応答時間の差で
-  // ユーザー名の存在が分かる（`docs/security.md` 2.3 の区別しない方針）。
-  const passwordMatches =
-    usernameMatches && (await verify(runtime.authPasswordHash, credentials.password).catch(() => false));
+  // `&&` で短絡させない。usernameMatches と無関係に必ず verify を呼ぶ。
+  // 短絡するとユーザー名不一致の応答が速く返り、時間差でユーザー名の存在が
+  // 推測できる（`docs/security.md` 2.3 の区別しない方針）。
+  const passwordMatches = await verify(
+    runtime.authPasswordHash,
+    credentials.password,
+  ).catch(() => false);
 
   if (!usernameMatches || !passwordMatches) return unauthorized();
   return credentials.username;

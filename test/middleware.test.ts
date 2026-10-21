@@ -4,6 +4,7 @@
  * `createRoutesStub` はミドルウェアを実行しないため、ミドルウェア関数を直接呼んで
  * `RouterContextProvider` への設定までを確認する（docs/operations.md の検証対象「認証」「CSRF」）。
  */
+import { hash } from "argon2";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { RouterContextProvider } from "react-router";
 
@@ -20,6 +21,16 @@ import {
 } from "../app/lib/csrf.server.ts";
 import { loadRuntimeConfig } from "../app/lib/config.server.ts";
 import { validEnvironment } from "./support/environment.ts";
+
+/**
+ * `argon2.verify` の spy。ファイル全体で本物へ委譲し、呼び出しの記録だけを取る。
+ * ESM の名前空間は `vi.spyOn` できないため `vi.mock` で包む。
+ */
+const verifyMock = vi.hoisted(() => vi.fn());
+vi.mock("argon2", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("argon2")>()),
+  verify: (...args: Parameters<typeof verifyMock>) => verifyMock(...args),
+}));
 
 /** 平文パスワードに対応するハッシュ（`plaintextPassword` の Argon2id 値）。テスト専用。 */
 const plaintextPassword = "password";
@@ -45,8 +56,11 @@ function middlewareArgs(requestObject: Request, context = new RouterContextProvi
   >[0];
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.unstubAllEnvs();
+  const actual = await vi.importActual<typeof import("argon2")>("argon2");
+  verifyMock.mockImplementation((hashValue, password) => actual.verify(hashValue, password));
+  verifyMock.mockClear();
   // モジュールスコープの cache を消す。`vi.unstubAllEnvs()` は cache を消さないため、
   // これを忘れると最初に評価した env の値へ固定される（98d8）。
   __resetRuntimeConfigCache();
@@ -104,6 +118,75 @@ describe("authenticate", () => {
     expect((result as Response).headers.get("WWW-Authenticate")).toBe(
       'Basic realm="power-manager"',
     );
+  });
+
+  test("UTF-8 のマルチバイト資格情報も正しく認証する", async () => {
+    // username は設定側の文字種制限（英数字と . _ - ）に縛られるため、
+    // マルチバイトはパスワード側で検証する。`atob` は UTF-8 を壊すので回帰検出になる。
+    const multibytePassword = "パスワード123";
+    const env = validEnvironment();
+    env.POWER_MANAGER_AUTH_PASSWORD_HASH = await hash(multibytePassword);
+    const runtime = loadRuntimeConfig(env);
+    // UTF-8 バイト列を Base64 化する（`btoa` は latin1 なので手動変換）。
+    const raw = new TextEncoder().encode(`admin:${multibytePassword}`);
+    const credentials = btoa(String.fromCharCode(...raw));
+    const result = await authenticate(
+      request("/", { headers: { authorization: `Basic ${credentials}` } }),
+      runtime,
+    );
+    expect(result).toBe("admin");
+  });
+
+  test("誤ったユーザー名でも verify は呼ばれる（timing 差の排除）", async () => {
+    const env = validEnvironment();
+    env.POWER_MANAGER_AUTH_PASSWORD_HASH = plaintextHash;
+    const runtime = loadRuntimeConfig(env);
+    const wrongUser = btoa(`other:${plaintextPassword}`);
+    const result = await authenticate(
+      request("/", { headers: { authorization: `Basic ${wrongUser}` } }),
+      runtime,
+    );
+    expect((result as Response).status).toBe(401);
+    expect(verifyMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("`:` のない資格情報は 401", async () => {
+    const env = validEnvironment();
+    env.POWER_MANAGER_AUTH_PASSWORD_HASH = plaintextHash;
+    const runtime = loadRuntimeConfig(env);
+    const noColon = btoa("admin-without-colon");
+    const result = await authenticate(
+      request("/", { headers: { authorization: `Basic ${noColon}` } }),
+      runtime,
+    );
+    expect(result).toBeInstanceOf(Response);
+    expect((result as Response).status).toBe(401);
+  });
+
+  test("不正な Base64 は 401", async () => {
+    const env = validEnvironment();
+    env.POWER_MANAGER_AUTH_PASSWORD_HASH = plaintextHash;
+    const runtime = loadRuntimeConfig(env);
+    const result = await authenticate(
+      request("/", { headers: { authorization: "Basic !!!not-base64!!!" } }),
+      runtime,
+    );
+    expect(result).toBeInstanceOf(Response);
+    expect((result as Response).status).toBe(401);
+  });
+
+  test("不正な UTF-8 バイト列の資格情報は 401", async () => {
+    const env = validEnvironment();
+    env.POWER_MANAGER_AUTH_PASSWORD_HASH = plaintextHash;
+    const runtime = loadRuntimeConfig(env);
+    // `0xff` は UTF-8 として不正な先頭バイト。
+    const invalid = btoa(String.fromCharCode(0x61, 0x3a, 0xff, 0xfe));
+    const result = await authenticate(
+      request("/", { headers: { authorization: `Basic ${invalid}` } }),
+      runtime,
+    );
+    expect(result).toBeInstanceOf(Response);
+    expect((result as Response).status).toBe(401);
   });
 
   test("Basic でない Authorization は 401", async () => {
