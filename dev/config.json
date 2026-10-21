@@ -1,0 +1,54 @@
+{
+  "version": 2,
+  "servers": [
+    {
+      "id": "nas",
+      "name": "NAS",
+      "groups": ["storage"],
+      "macAddress": "00:11:22:33:44:55",
+      "wol": {
+        "broadcastAddress": "192.168.1.255",
+        "port": 9
+      },
+      "ssh": {
+        "host": "nas.example.internal",
+        "port": 2222,
+        "user": "power-manager",
+        "shutdownCommand": "sudo systemctl poweroff"
+      }
+    },
+    {
+      "id": "test-01",
+      "name": "検証機 01",
+      "groups": ["test"],
+      "macAddress": "00:11:22:33:44:66",
+      "ssh": {
+        "host": "test-01.example.internal",
+        "user": "power-manager",
+        "shutdownCommand": "sudo systemctl poweroff"
+      }
+    }
+  ],
+  "groups": [
+    { "id": "storage", "name": "ストレージ" },
+    { "id": "test", "name": "検証機" }
+  ],
+  "schedules": [
+    {
+      "id": "test-night-shutdown",
+      "name": "検証機 夜間停止",
+      "enabled": true,
+      "target": { "type": "group", "id": "test" },
+      "operation": "shutdown",
+      "repeat": { "kind": "daily", "time": "23:30" }
+    },
+    {
+      "id": "storage-morning-wake",
+      "name": "ストレージ 平日朝起動",
+      "enabled": true,
+      "target": { "type": "server", "id": "nas" },
+      "operation": "wake",
+      "repeat": { "kind": "weekly", "days": ["mon", "tue", "wed", "thu", "fri"], "time": "07:30" }
+    }
+  ]
+}
