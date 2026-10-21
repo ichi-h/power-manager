@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { Route } from "./+types/root";
 import {
   Links,
   Meta,
@@ -8,7 +8,10 @@ import {
   isRouteErrorResponse,
   useRouteError,
 } from "react-router";
+import type { ReactNode } from "react";
 
+import { authMiddleware } from "./lib/auth.server.ts";
+import { csrfMiddleware } from "./lib/csrf.server.ts";
 import "./app.css";
 
 export function Layout({ children }: { children: ReactNode }) {
@@ -39,6 +42,15 @@ export default function Root() {
     </main>
   );
 }
+
+/**
+ * 認証と CSRF のミドルウェア（FR-10, SEC-01, SEC-03）。
+ *
+ * root のミドルウェアは全ルートの子孫へ継承されるため、ここに配列で適用するだけで
+ * 画面・action・リソースルートのすべてが対象になる（`docs/security.md` 2.2）。
+ * 認証を免除するのは `authMiddleware` 内で判定する `/healthz` のみ（SEC-10）。
+ */
+export const middleware: Route.MiddlewareFunction[] = [authMiddleware, csrfMiddleware];
 
 /**
  * 本番向けの汎用エラー表示。内部エラーの詳細は表示しない（SEC-05）。
