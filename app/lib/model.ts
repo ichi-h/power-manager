@@ -22,6 +22,12 @@ export const weekdays = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as con
 /** 曜日。 */
 export type Weekday = (typeof weekdays)[number];
 
+/** サーバーの死活状態（FR-03）。未取得の初期値は `unknown`。 */
+export const serverStates = ["online", "offline", "unknown"] as const;
+
+/** サーバーの死活状態（FR-03）。 */
+export type ServerState = (typeof serverStates)[number];
+
 /** 操作対象の種別（FR-12）。 */
 export const targetTypes = ["server", "group"] as const;
 
