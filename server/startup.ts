@@ -25,6 +25,7 @@ import {
   type ConfigStore,
 } from "../app/lib/config-store.server.ts";
 import { configurationErrorExitCode } from "../app/lib/exit-codes.ts";
+import type { ManagedConfig } from "../app/lib/model.ts";
 import { ManagedConfigError } from "../app/lib/runtime-config.server.ts";
 
 /** 終了処理を差し替えられるようにする（テストで `process.exit` を呼ばせない）。 */
@@ -65,6 +66,41 @@ function failStartup(error: Error, exit: ExitFunction): never {
 }
 
 /**
+ * `startRuntime` が投げた例外を受けて、種別ごとに終了する。`server/index.ts` の起動経路が
+ * これ 1 つを通るため、終了コードの割り当てをここで固定できる（テスト可能にするため
+ * `startRuntime` から分けている）。
+ *
+ * - 設定不備（`ConfigurationError` / `ManagedConfigError`）は再起動しても同じ失敗を
+ *   繰り返すため、終了コード 78 で再起動抑止の対象にする（NFR-05）。
+ * - それ以外（実装の不具合・I/O 例外）は終了コード 1 にし、`startup_failed`
+ *   （`code: operation_failed`）を 1 行残す。78 にすると再起動もされず記録も残らない
+ *   無言死になる（NFR-05, NFR-10）。
+ *
+ * 差し替えた `exit` が戻ってきた場合に備えて投げ、呼び出し側が待受を始めないようにする。
+ */
+export function exitAfterStartupFailure(
+  error: unknown,
+  exit: ExitFunction = (code) => process.exit(code),
+): never {
+  if (error instanceof ConfigurationError || error instanceof ManagedConfigError) {
+    // `startRuntime` が `startup_failed` を出力済み。追加の出力はしない。
+    exit(configurationErrorExitCode);
+  } else {
+    writeStderrLine(
+      JSON.stringify({
+        event: "startup_failed",
+        code: "operation_failed",
+        // 例外の種別だけを載せ、値やパスは載せない（SEC-05）。
+        reason: error instanceof Error ? error.name : "UnknownError",
+      }),
+    );
+    exit(1);
+  }
+
+  throw error;
+}
+
+/**
  * 環境変数と管理対象 JSON を検証し、失敗したら待受を開始せずに終了コード 78 で終了する
  * （NFR-05, NFR-06, FR-08）。
  *
@@ -83,7 +119,7 @@ export async function startRuntime(
     failStartup(error, exit);
   }
 
-  let managedConfig;
+  let managedConfig: ManagedConfig;
   try {
     managedConfig = await loadManagedConfigForStartup(runtime.configPath);
   } catch (error) {

@@ -14,7 +14,12 @@ import { configurationErrorExitCode } from "../app/lib/exit-codes.ts";
 import { createAppListener } from "./app.ts";
 import { logRequestFailure } from "./log.ts";
 import { serveStatic } from "./static.ts";
-import { startRuntime, writeStderrLine } from "./startup.ts";
+import {
+  exitAfterStartupFailure,
+  startRuntime,
+  writeStderrLine,
+  type StartupResult,
+} from "./startup.ts";
 
 const forcedExitMilliseconds = 5_000;
 
@@ -26,13 +31,17 @@ const listenAddressErrorCodes = new Set(["EADDRINUSE", "EACCES", "EINVAL"]);
 // `startRuntime` は設定不備なら終了コード 78 で終了したうえで例外を投げる（テストで
 // `process.exit` を差し替えられるようにするため）。待受を始めないことを保証するため、
 // ここで受け止めて以降の処理へ進まない。
+//
+// 設定不備以外の例外（実装の不具合・I/O 例外）は再送出されている。これらを 78 で落とすと
+// `RestartPreventExitStatus` により再起動されず、`startup_failed` も残らない無言死になる。
+// 終了コード 1 にして再起動と失敗記録の両方を働かせる（NFR-05, NFR-10）。
 
-let startup;
+let startup: StartupResult;
 try {
   startup = await startRuntime();
-} catch {
-  // 設定不備は `startRuntime` が `startup_failed` を出力済み。追加の出力はしない。
-  process.exit(configurationErrorExitCode);
+} catch (error) {
+  // 設定不備は 78、それ以外（実装の不具合・I/O 例外）は 1 で落とす。詳細は `startup.ts`。
+  exitAfterStartupFailure(error);
 }
 
 const { runtime, configStore } = startup;

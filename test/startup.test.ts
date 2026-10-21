@@ -40,7 +40,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 import { ConfigurationError, loadRuntimeConfig } from "../app/lib/config.server.ts";
 import { configurationErrorExitCode } from "../app/lib/exit-codes.ts";
 import { ManagedConfigError } from "../app/lib/runtime-config.server.ts";
-import { startRuntime } from "../server/startup.ts";
+import { exitAfterStartupFailure, startRuntime } from "../server/startup.ts";
 
 import { validEnvironment } from "./support/environment.ts";
 import { validManagedConfig } from "./support/managed-config.ts";
@@ -183,6 +183,30 @@ describe("startRuntime", () => {
     await expect(startRuntime(null as never, exit)).rejects.toThrow();
     expect(exit).not.toHaveBeenCalled();
     expect(writtenToStderr).toEqual([]);
+  });
+
+  test("起動経路の出口は設定不備だけを終了コード 78 にする", async () => {
+    // `server/index.ts` の catch が通る関数そのものを固定する。例外の種別ごとに
+    // 「再起動抑止 / 再起動して記録」が分かれる（NFR-05, NFR-10）。
+    const configurationExit = vi.fn();
+    expect(() =>
+      exitAfterStartupFailure(
+        new ConfigurationError("POWER_MANAGER_PORT: 数値で指定してください"),
+        configurationExit,
+      ),
+    ).toThrow(ConfigurationError);
+    expect(configurationExit).toHaveBeenCalledExactlyOnceWith(configurationErrorExitCode);
+    // 設定不備の 1 行は `startRuntime` が出力済み。二重に出さない。
+    expect(writtenToStderr).toEqual([]);
+
+    const runtimeError = new TypeError("managedConfig is not iterable");
+    expect(() => exitAfterStartupFailure(runtimeError, vi.fn())).toThrow(runtimeError);
+    expect(writtenToStderr).toHaveLength(1);
+    expect(JSON.parse(writtenToStderr[0] ?? "")).toEqual({
+      event: "startup_failed",
+      code: "operation_failed",
+      reason: "TypeError",
+    });
   });
 
   test("startup_failed の reason に環境変数の値を混ぜない", async () => {
