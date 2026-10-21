@@ -1,8 +1,9 @@
 /**
  * サーバービルドと load context の組み立て。
  *
- * 環境変数・設定 JSON の検証はここで完結させ、`server/index.ts` は待受だけを扱う。
- * 起動時検証の失敗は呼び出し側が終了コード 78 で終了する（NFR-05, NFR-06）。
+ * 環境変数の検証は `server/startup.ts` で済ませ、ここは検証済みの設定を受け取るだけ。
+ * `server/index.ts` は待受と終了コードを扱う。起動時検証の失敗は呼び出し側が終了コード
+ * 78 で終了する（NFR-05, NFR-06）。
  *
  * load context には検証済みの実行時設定を 1 度だけ載せ、loader/action からは
  * `context.get(configContext)` で参照する。要求ごとに環境変数を読み直さない。

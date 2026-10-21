@@ -76,7 +76,7 @@ power-manager（Node.js 24 プロセス、専用 system user）
 
 ### 3.2 起動シーケンス
 
-1. サーバーエントリ（`server/app.ts`）が環境変数を読み、Zod で検証する。1 つでも不正なら終了コード `78`（設定エラー）で終了する（NFR-06, NFR-05）。
+1. `server/index.ts` が `server/startup.ts` の `startRuntime()` を呼び、環境変数を読み、Zod で検証する。1 つでも不正なら標準エラーへ `startup_failed` を 1 行出し、待受を開始せずに終了コード `78`（設定エラー）で終了する（NFR-06, NFR-05）。`server/app.ts` は検証済みの設定を受け取るだけで、環境変数は読まない。
 2. 管理対象 JSON を読み、検証してメモリへ展開する。失敗時も終了コード `78` で終了する（FR-08, FR-09）。
 3. 実行結果リングバッファとスケジューラを初期化する。
 4. `createRequestListener` で HTTP サーバーを組み立て、`127.0.0.1:$POWER_MANAGER_PORT` で待受を開始する。
@@ -92,22 +92,35 @@ power-manager（Node.js 24 プロセス、専用 system user）
 
 ```ts
 // server/index.ts（概略）
-import { createRequestListener } from "@react-router/node";
 import { createServer } from "node:http";
+import { createAppListener } from "./app.ts";
+import { startRuntime } from "./startup.ts";
 
-const listener = createRequestListener({
-  build: () => import("../build/server/index.js"),
-  mode: "production",
-  getLoadContext: () => {
-    const context = new RouterContextProvider();
-    // 載せるのは公開値だけ（秘密値は認証ミドルウェアが直接読む）。
-    context.set(configContext, toPublicRuntimeConfig(loadRuntimeConfig()));
-    return context;
-  },
-});
+// 起動時に 1 度だけ検証する（失敗すれば exit 78）。
+const runtime = startRuntime();
+const listener = createAppListener(runtime);
 
 const server = createServer(listener);
-server.listen(port, "127.0.0.1");
+server.listen(runtime.port, "127.0.0.1");
+```
+
+```ts
+// server/app.ts（概略）
+export function createAppListener(runtime: RuntimeConfig) {
+  return createRequestListener({
+    // ビルド成果物を読み込み、handleError と allowedActionOrigins を差し替える。
+    build: () => loadServerBuild(runtime),
+    mode: "production",
+    getLoadContext: () => createLoadContext(runtime),
+  });
+}
+
+export function createLoadContext(runtime: RuntimeConfig) {
+  const context = new RouterContextProvider();
+  // 載せるのは公開値だけ。秘密値は認証ミドルウェアが runtime から直接読む。
+  context.set(configContext, toPublicRuntimeConfig(runtime));
+  return context;
+}
 ```
 
 - `getLoadContext` は v8 では `RouterContextProvider` を返す（プレーンオブジェクトを返す例は v6/v7 のもの）。loader/action からは `context.get(configContext)` で参照する。
@@ -116,7 +129,7 @@ server.listen(port, "127.0.0.1");
 - 未捕捉の例外は `build.entry.module.handleError` を差し替えて処理する（7.1 の `request_failed`）。`createRequestListener` は `handleError` を受け付けないため、ビルドを浅くコピーして差し替える。
 - 仮画面の `/` も loader で `requireRuntimeConfig` を呼ぶ。起動して 1 ページ返すだけで、2 つのモジュールグラフが同じキーを共有していることを確認できる（`npm run smoke` が本番ビルドに対して検証する）。
 - ストリーミングは Web 標準の `ReadableStream` をそのまま流す。
-- SIGTERM/SIGINT では `server.close()` → スケジューラ停止 → リングバッファの書き出し（何もしない）→ `process.exit(0)`。5 秒で強制終了するタイマーを `unref()` 付きで併設する。
+- SIGTERM/SIGINT では `shutdown(signal)` が `server.close()` → スケジューラ停止 → リングバッファの書き出し（何もしない）→ `process.exit(0)` を進める。5 秒で強制終了するタイマーはその場で張り、`server.close()` の完了時に `clearTimeout` で解除する。起動時に張ると、正常に動いているプロセスが時間経過だけで落ちるため張らない。
 - 開発時（`react-router dev`）は Vite がサーバーモジュールを再インポートするため、スケジューラはモジュールスコープのシングルトンで二重起動を防ぎ、`NODE_ENV !== "production"` では起動しない。
 
 ### 3.4 プロセス内状態
@@ -135,7 +148,10 @@ server.listen(port, "127.0.0.1");
 | ファイル                     | 責務                                                                       |
 | ---------------------------- | -------------------------------------------------------------------------- |
 | `server/index.ts`            | HTTP サーバー生成、待受、シグナル処理、終了コード                         |
-| `server/app.ts`              | `createRequestListener` の組立て、load context、起動時設定読込み           |
+| `server/startup.ts`          | 起動時の設定読込みと、設定不備時の終了（終了コード 78）                    |
+| `server/app.ts`              | `createRequestListener` の組立て、ビルド成果物の差し替え、load context     |
+| `server/log.ts`              | リクエスト処理中の失敗の分類と 1 行ログ                                    |
+| `server/static.ts`           | `build/client` の静的配信                                                  |
 | `app/root.tsx`               | レイアウト、認証ミドルウェアの適用、エラーバウンダリ                       |
 | `app/app.css`                | Tailwind CSS の読込みと、配色・フォントなどのテーマトークン定義            |
 | `app/routes.ts`              | ルート定義                                                                 |
@@ -145,13 +161,15 @@ server.listen(port, "127.0.0.1");
 | `app/routes/healthz.ts`      | `GET /healthz`。認証免除                                                  |
 | `app/lib/auth.server.ts`     | Basic 認証の検証、ミドルウェア                                            |
 | `app/lib/csrf.server.ts`     | Origin 検証ミドルウェア                                                    |
-| `app/lib/config.server.ts`   | 環境変数スキーマ、設定 JSON スキーマ、設定ストア（原子的再読込）           |
+| `app/lib/config.server.ts`   | 環境変数スキーマと検証済み設定の型（`PublicRuntimeConfig` など）           |
 | `app/lib/model.ts`           | ドメイン型（`Server`、`Group`、`Schedule`、状態・操作・結果コード）        |
 | `app/lib/power.server.ts`    | WOL 送信、SSH 停止、TCP 死活確認、排他制御、並列度制御                     |
 | `app/lib/scheduler.server.ts`| 次回実行時刻の計算、発火、busy スキップ、実行結果の記録                   |
 | `app/lib/history.server.ts`  | 直近 100 件のリングバッファ                                               |
 
 外部依存は `react-router`、`@react-router/node`、`react`、`react-dom`、`zod`、`argon2`（Argon2id 検証）に限定する。UDP/TCP/子プロセスは `node:dgram`、`node:net`、`node:child_process` を使う。
+
+`app/lib/config.server.ts` は現時点で環境変数のスキーマと検証済み設定の型だけを持つ。設定 JSON のスキーマとストア（原子的再読込）は後続の t003 で `runtime-config.server.ts` / `config-store.server.ts` に分ける。同じく t003 では、起動時の準備物をまとめて渡す形（`createAppListener(runtime, configStore)`）にし、`server/index.ts` の責務を待受と終了コードに限定したまま設定 JSON を組み込む。`invalid_configuration` を環境変数と設定 JSON で共用している点も、そこではコードを分けるか検討する。
 
 ビルド時のみ Tailwind CSS（`tailwindcss`、`@tailwindcss/vite`）を devDependency として使う。ビルド時に CSS を生成するだけで、実行時のサーバー依存は増えない。スタイルは各コンポーネントのユーティリティクラスに直接記述し、共通の配色・フォントだけを `app/app.css` の `@theme` で定義する。明暗の切り替えは `color-scheme` と CSS のシステム色（`Canvas` / `CanvasText`）に委ねる。
 
@@ -272,7 +290,7 @@ ssh -i <identityFile>
 
 | コード                  | 発生条件                                  | HTTP/表示上の扱い                             |
 | ----------------------- | ----------------------------------------- | --------------------------------------------- |
-| `invalid_configuration` | 環境変数・設定 JSON の検証失敗            | 起動中止（終了コード 78）／再読込は旧設定維持 |
+| `invalid_configuration` | 環境変数の検証失敗、待受アドレスの使用不可 | 起動中止（終了コード 78）／再読込は旧設定維持 |
 | `ssh_unavailable`       | `ssh` 実行ファイルが見つからない          | 操作失敗                                      |
 | `operation_failed`      | タイムアウト、コマンド異常終了            | 操作失敗                                      |
 | `busy`                  | 同一対象の電源操作が実行中                | 拒否（実行中）／予約はスキップ                |
@@ -287,7 +305,8 @@ ssh -i <identityFile>
 | イベント          | 主なフィールド                                                    |
 | ----------------- | ----------------------------------------------------------------- |
 | `started`         | `port`                                                            |
-| `startup_failed`  | `code`（`invalid_configuration`）、`reason`                       |
+| `startup_failed`  | `code`（`invalid_configuration` / `operation_failed`）、`reason`  |
+| `shutdown`        | `signal`                                                          |
 | `power_operation` | `serverId`、`operation`、`result`、`code`、`group`（一括時）      |
 | `schedule_run`    | `scheduleId`、`target`、`operation`、`result`、`code`             |
 | `schedule_skip`   | `scheduleId`、`code`（`busy` / `missed_schedule`）                |

@@ -75,8 +75,9 @@ export const middleware: Route.MiddlewareFunction[] = [authMiddleware, csrfMiddl
 
 ### 3.2 `POWER_MANAGER_PUBLIC_ORIGIN`
 
-- 既定は HTTPS URL を要求する。
-- ローカル開発に限り、ホスト名が厳密に `localhost` の HTTP URL（ポート指定可）を許可する。
+- 既定は HTTPS URL を要求する。ホストは `*` を含まない（React Router の `allowedActionOrigins` はワイルドカードを解釈するため、`*.example.ts.net` のような指定は拒否する）、空ラベルなし、末尾ドットなし、ポート `0` なし、`null`・`undefined` などの予約語でないことを検証する。
+- `NODE_ENV=production`（未設定を含む）では、`http://localhost` も含めて HTTP URL を拒否する。待受を始める前の起動検証で落とす。
+- `NODE_ENV=development` のときに限り、ホスト名が厳密に `localhost` の HTTP URL（ポート指定可）を許可する。
 - `127.0.0.1`、`::1`、その他のホスト名では HTTP を許可しない（DNS リバインディング的な誤用と設定ミスを防ぐため）。
 - リバースプロキシは外部の `Host` とプロトコル情報を正しく転送し、アプリケーションが見る `Origin` と設定値が一致するようにする。
 

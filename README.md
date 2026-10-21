@@ -43,6 +43,8 @@ POWER_MANAGER_SSH_IDENTITY_FILE=/run/secrets/power-manager/id_ed25519
 POWER_MANAGER_SSH_KNOWN_HOSTS_FILE=/etc/power-manager/known_hosts
 ```
 
+`NODE_ENV` は省略できます（省略時は `production`）。`development` を指定したときだけ `http://localhost` の Origin を許可します。
+
 `POWER_MANAGER_AUTH_PASSWORD_HASH` は Argon2id のハッシュです。アプリケーションはハッシュを生成しません。設定JSON（`version: 2`、サーバー・グループ・予約）の形式は [運用設計](docs/operations.md) を参照してください。設定・鍵・known_hosts は `/home` の外に置き、`power-manager` ユーザーが秘密鍵を `0400` または `0600` で読めるようにしてください。
 
 ローカル開発時に限り、`POWER_MANAGER_PUBLIC_ORIGIN=http://localhost:5173` のようにホスト名が `localhost` の HTTP Origin を使用できます。`127.0.0.1` や外部ホストの HTTP Origin は使用できません。

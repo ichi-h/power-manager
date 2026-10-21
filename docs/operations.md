@@ -15,9 +15,11 @@
 | `POWER_MANAGER_AUTH_PASSWORD_HASH`   | Argon2id パスワードハッシュ                   | `$argon2id$v=..$m=..,t=..,p=..$salt$hash`、パラメータは下表の範囲           |
 | `POWER_MANAGER_SSH_IDENTITY_FILE`    | SSH 専用秘密鍵の絶対パス                      | 絶対パス、前後の空白なし、正規形、NUL なし                                  |
 | `POWER_MANAGER_SSH_KNOWN_HOSTS_FILE` | SSH 接続先を検証する `known_hosts` の絶対パス | 絶対パス、前後の空白なし、正規形、NUL なし                                  |
-| `NODE_ENV`                           | 実行モード                                    | `production` 固定（本番）                                                  |
+| `NODE_ENV`                           | 実行モード                                    | `production` / `development` / `test`。省略時は `production`               |
 
 値は前後の空白を落として解釈しない。`FOO=bar ` のような行末空白は設定ミスとして起動時に拒否する。
+
+`NODE_ENV` は 7 つの `POWER_MANAGER_*` とは別扱いで、未設定なら `production` とみなす。本番では明示しなくてよい。`NODE_ENV=production`（および未設定）では `POWER_MANAGER_PUBLIC_ORIGIN` に `http://localhost` も含めて HTTP の URL を指定できない。ローカル開発でのみ `development` を指定する（[セキュリティ設計](security.md) 3.2）。
 
 パスワードハッシュのパラメータ範囲:
 
@@ -41,6 +43,8 @@ POWER_MANAGER_AUTH_USERNAME=admin
 POWER_MANAGER_AUTH_PASSWORD_HASH=$argon2id$...
 POWER_MANAGER_SSH_IDENTITY_FILE=/run/secrets/power-manager/id_ed25519
 POWER_MANAGER_SSH_KNOWN_HOSTS_FILE=/etc/power-manager/known_hosts
+# 本番では不要（未設定なら production として扱う）
+# NODE_ENV=production
 ```
 
 パスワードハッシュは運用者が生成する。アプリケーションは生成機能を持たない。
@@ -252,7 +256,7 @@ buildNpmPackage {
 npm ci
 npm run build
 nix build .#default
-./result/bin/power-manager --version   # 起動だけなら環境変数が揃っている必要がある
+./result/bin/power-manager   # 環境変数が揃っていなければ exit 78 で終了する（引数は解釈しない）
 ```
 
 ## 5. NixOS モジュール
