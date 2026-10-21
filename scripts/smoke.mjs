@@ -109,7 +109,26 @@ function killQuietly(target) {
 
 const deadline = Date.now() + timeoutMilliseconds;
 
+/**
+ * 待受が始まったことをログで確認する。
+ * HTTP の応答を待つだけだと、ルートが壊れて 500 を返し続けた場合に
+ * 「起動していない」のか「起動しているが応答が壊れている」のか分からない。
+ */
+async function waitForStartedLog() {
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) {
+      throw new Error(`サーバーが起動前に終了しました (exit ${child.exitCode})\n${captured.stderr}`);
+    }
+    if (captured.stdout.includes('"event":"started"')) return;
+    await delay(100);
+  }
+  throw new Error(`起動ログ (started) が出力されませんでした\n${captured.stderr}`);
+}
+
 async function waitForStarted() {
+  await waitForStartedLog();
+
+  let lastFailure = null;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) {
       throw new Error(`サーバーが起動前に終了しました (exit ${child.exitCode})\n${captured.stderr}`);
@@ -124,13 +143,24 @@ async function waitForStarted() {
       if (!body.includes("power-manager")) {
         throw new Error("GET / の HTML にアプリケーションの内容が含まれていません");
       }
+      // エラー画面ではなくルートの出力が返っていること。`/` の loader は実行時設定を
+      // `context.get` で読むため、キーが別実体になっていればここで 500 になる（r1a2 の再発防止）。
+      if (!body.includes("画面を準備中です。")) {
+        throw new Error("GET / がルートの出力ではなくエラー画面を返しました");
+      }
+      if (body.includes("処理を完了できませんでした")) {
+        throw new Error("GET / がエラーバウンダリの画面を返しました");
+      }
       return;
     } catch (error) {
-      if (Date.now() >= deadline) throw error;
+      lastFailure = error;
+      if (Date.now() >= deadline) break;
       await delay(200);
     }
   }
-  throw new Error("起動待ちがタイムアウトしました");
+
+  const detail = lastFailure instanceof Error ? lastFailure.message : String(lastFailure);
+  throw new Error(`待受後の最初の応答が不正でした: ${detail}\n${captured.stderr}`);
 }
 
 /**
@@ -164,12 +194,23 @@ function stopServer() {
 /**
  * 不正な環境変数では待受を開始せず、終了コード 78 で終了することを確認する（NFR-05, NFR-06）。
  *
+ * ポートだけは有効な値を渡す。ポート自体が不正だと「待受を始めない」ことが、検証で弾かれた
+ * 結果なのかポート番号が読めなかった結果なのか区別できない。終了後にそのポートへ接続して
+ * 拒否されることまで見れば、待受を始めていないことが観測できる。
+ *
  * `spawn` 自体の失敗と、終了しないまま待ち続ける場合の両方で子プロセスを落とす。
  */
-function checkConfigurationError() {
+async function checkConfigurationError() {
+  const unusedPort = await reserveFreePort();
+  const unusedHost = `127.0.0.1:${unusedPort}`;
+
   return new Promise((resolve, reject) => {
     const invalid = spawn(process.execPath, [serverEntry], {
-      env: childEnvironment({ POWER_MANAGER_PORT: "not-a-port" }),
+      // ポートは有効なまま、ユーザー名だけを空にして検証で止める。
+      env: childEnvironment({
+        POWER_MANAGER_PORT: String(unusedPort),
+        POWER_MANAGER_AUTH_USERNAME: "",
+      }),
       stdio: ["ignore", "pipe", "pipe"],
     });
     const invalidCaptured = capture(invalid);
@@ -188,21 +229,29 @@ function checkConfigurationError() {
 
     invalid.once("error", (error) => finish(error));
     invalid.once("exit", (code) => {
-      if (code !== configurationErrorExitCode) {
-        finish(
-          new Error(`不正な設定の終了コードが ${code} でした（期待値 ${configurationErrorExitCode}）`),
-        );
-        return;
-      }
-      if (!invalidCaptured.stderr.includes('"code":"invalid_configuration"')) {
-        finish(
-          new Error(
+      void (async () => {
+        if (code !== configurationErrorExitCode) {
+          throw new Error(
+            `不正な設定の終了コードが ${code} でした（期待値 ${configurationErrorExitCode}）`,
+          );
+        }
+        if (!invalidCaptured.stderr.includes('"code":"invalid_configuration"')) {
+          throw new Error(
             `startup_failed のログに invalid_configuration が含まれていません:\n${invalidCaptured.stderr}`,
-          ),
-        );
-        return;
-      }
-      finish();
+          );
+        }
+        // 設定不備では待受を開始しない。started のログも出ない。
+        if (invalidCaptured.stdout.includes('"event":"started"')) {
+          throw new Error(`不正な設定なのに started を出力しました:\n${invalidCaptured.stdout}`);
+        }
+        try {
+          await fetch(`http://${unusedHost}/`);
+        } catch {
+          // 接続を拒否された = 待受を開始していない。
+          return;
+        }
+        throw new Error(`不正な設定で終了したのに ${unusedHost} が接続を受け付けました`);
+      })().then(finish, (error) => finish(error));
     });
   });
 }
