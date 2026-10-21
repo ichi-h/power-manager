@@ -63,6 +63,7 @@ function renderDashboard(
     action?: () => OperationResult | Response;
     onStatusLoad?: () => void;
     onHistoryLoad?: () => void;
+    onLoad?: () => void;
     onAction?: (formData: FormData) => void;
     statusStates?: Record<string, string>;
     history?: () => { records: ReadonlyArray<HistoryRecord> } | Response;
@@ -72,7 +73,10 @@ function renderDashboard(
     {
       path: '/',
       Component: Dashboard,
-      loader: () => data,
+      loader: () => {
+        options.onLoad?.();
+        return data;
+      },
       action: async ({ request }) => {
         const form = await request.formData();
         options.onAction?.(form);
@@ -259,6 +263,91 @@ describe('単体操作の行内表示', () => {
       (await screen.findAllByRole('button', { name: '起動' }))[0]!,
     );
     expect(window.location.pathname).toBe('/');
+  });
+});
+
+describe('部分更新（FR-02, FR-07, NFR-09）', () => {
+  test('状態を自動更新してもページの loader を再実行しない', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const onLoad = vi.fn();
+    const onStatusLoad = vi.fn();
+    renderDashboard(loaderData(), { onLoad, onStatusLoad });
+
+    await advanceUntil(() => onStatusLoad.mock.calls.length >= 2);
+
+    // 画面全体の再読み込み（loader の再実行）は起きない。
+    expect(onLoad).toHaveBeenCalledTimes(1);
+  });
+
+  test('自動更新の前後で「最近の実行」の要素は同じまま', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const recent = [record({ target: { type: 'server', id: 'nas' } })];
+    const { container } = renderDashboard(loaderData({ recent }));
+
+    expect(await screen.findByText('対象: サーバー nas')).toBeDefined();
+    const lists = container.querySelectorAll('ul');
+    const before = lists[1];
+    const beforeRow = before?.querySelector('li');
+
+    // 状態は変わる（再レンダーが起きる）が、「最近の実行」の要素は差し替わらない。
+    await advanceUntil(() => screen.queryByText('状態: オフライン') !== null);
+
+    // 「最近の実行」のリストと行の要素が差し替わっていない（部分更新になっている）。
+    const after = container.querySelectorAll('ul');
+    expect(after[1]).toBe(before);
+    expect(after[1]?.querySelector('li')).toBe(beforeRow);
+  });
+
+  test('送信中に 15 秒進めても対象行の「実行中」は消えない', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    renderDashboard(loaderData(), {
+      action: () =>
+        new Promise<OperationResult>(() => {
+          // 応答を返さず、送信中のまま 15 秒以上経過させる。
+        }) as unknown as OperationResult,
+    });
+
+    fireEvent.click(
+      (await screen.findAllByRole('button', { name: '起動' }))[0]!,
+    );
+    expect(await screen.findByText('実行中')).toBeDefined();
+
+    await advance(statusRefreshIntervalMs * 3);
+
+    expect(screen.getByText('実行中')).toBeDefined();
+  });
+
+  test('「実行中」は操作した対象行にだけ出る', async () => {
+    const { container } = renderDashboard(loaderData(), {
+      action: () =>
+        new Promise<OperationResult>(() => {}) as unknown as OperationResult,
+    });
+
+    fireEvent.click(
+      (await screen.findAllByRole('button', { name: '起動' }))[0]!,
+    );
+    expect(await screen.findByText('実行中')).toBeDefined();
+
+    expect(screen.getAllByText('実行中')).toHaveLength(1);
+    // 1 台目（NAS）の行にだけ出る。2 台目の行には出ない。
+    const rows = container.querySelectorAll('li');
+    expect(rows[0]?.textContent).toContain('実行中');
+    expect(rows[1]?.textContent).not.toContain('実行中');
+  });
+
+  test('操作しても URL は変わり、再訪しても action は再実行されない（FR-07）', async () => {
+    const onAction = vi.fn();
+    renderDashboard(loaderData(), { onAction });
+    const before = window.location.href;
+
+    fireEvent.click(
+      (await screen.findAllByRole('button', { name: '起動' }))[0]!,
+    );
+    await vi.waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
+
+    expect(window.location.href).toBe(before);
+    // 表示が同じ URL に留まるため、再読み込みで action が再送されることはない。
+    expect(window.location.search).toBe('');
   });
 });
 
