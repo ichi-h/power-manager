@@ -1,9 +1,9 @@
 /**
- * TCP 死活確認と並列度制御（FR-03, NFR-07, NFR-08）。
+ * TCP 死活確認・電源操作・排他制御（FR-03〜FR-06, NFR-07, NFR-08）。
  *
- * - 判定は `ssh.host` と `ssh.port` への TCP 接続のみとする。ICMP ping もログイン成否も
+ * - 死活判定は `ssh.host` と `ssh.port` への TCP 接続のみとする。ICMP ping もログイン成否も
  *   使わない（FR-03）。
- * - 1 件あたりの上限は 5 秒（NFR-07）。タイムアウトも `offline` として扱う。
+ * - 死活確認 1 件あたりの上限は 5 秒（NFR-07）。タイムアウトも `offline` として扱う。
  * - 同時実行数は 8 の固定とし、環境変数などで変更する設定項目を持たない（NFR-08）。
  * - 対象 ID ごとに進行中の Promise を共有する。複数タブ・手動更新・自動更新が重なっても
  *   同一対象への TCP 接続は 1 本に抑える（NFR-08）。完了時に破棄するため、未完了の確認が
@@ -13,7 +13,9 @@
  * `app/lib/runtime-config.server.ts` が済ませているため、ここでは「不正な定義」を
  * 考えない。
  */
+import { spawn } from "node:child_process";
 import { connect } from "node:net";
+import { createSocket } from "node:dgram";
 
 import type { ServerState } from "./model.ts";
 
@@ -23,11 +25,230 @@ export const checkTimeoutMs = 5_000;
 /** 死活確認の同時実行数上限。固定とし設定項目にしない（NFR-08）。 */
 const checkConcurrency = 8;
 
+/** WOL パケット送信のタイムアウト（ミリ秒）。送信 API の成否のみを成功とする（FR-04, NFR-07）。 */
+export const wolTimeoutMs = 5_000;
+
+/** SSH 停止コマンド実行のタイムアウト（ミリ秒）。終了コード 0 を成功とする（FR-05, NFR-07）。 */
+export const sshTimeoutMs = 30_000;
+
+/** 電源操作の失敗・拒否分類（`docs/architecture.md` 7 章）。 */
+export const powerOperationCodes = [
+  "invalid_configuration",
+  "ssh_unavailable",
+  "operation_failed",
+  "busy",
+  "missed_schedule",
+] as const;
+
+/** 電源操作の失敗・拒否分類。 */
+export type PowerOperationCode = (typeof powerOperationCodes)[number];
+
+/** 電源操作 1 回の成否。 */
+export type PowerResult = "succeeded" | "failed" | "skipped";
+
+/** 単体操作の結果。 */
+export type SingleOperationOutcome = {
+  readonly result: PowerResult;
+  /** 失敗・拒否時の分類。成功時は `null`。 */
+  readonly code: PowerOperationCode | null;
+};
+
+/**
+ * MAC アドレスを 6 バイトへ分解する。
+ *
+ * `ManagedConfig` の検証（`app/lib/runtime-config.server.ts`）を通った値だけを
+ * 受け取るため、実運用では `null` にはならない。失敗時は `invalid_configuration` として
+ * 扱えるように `null` を返す。
+ */
+export function parseMacAddress(macAddress: string): Uint8Array | null {
+  const parts = macAddress.split(":");
+  if (parts.length !== 6) return null;
+  const bytes = new Uint8Array(6);
+  for (let index = 0; index < 6; index += 1) {
+    const byte = Number.parseInt(parts[index] ?? "", 16);
+    if (!/^[0-9A-Fa-f]{2}$/.test(parts[index] ?? "")) return null;
+    bytes[index] = byte;
+  }
+  return bytes;
+}
+
+/**
+ * Magic Packet の本体（102 バイト）を組み立てる（`docs/architecture.md` 6.2）。
+ *
+ * `0xFF` × 6 + MAC × 16。MAC が分解できない場合は `null`。
+ */
+export function createMagicPacket(macAddress: string): Uint8Array | null {
+  const mac = parseMacAddress(macAddress);
+  if (mac === null) return null;
+  const packet = new Uint8Array(102);
+  packet.fill(0xff, 0, 6);
+  for (let index = 0; index < 16; index += 1) {
+    packet.set(mac, 6 + index * 6);
+  }
+  return packet;
+}
+
+/**
+ * WOL の 1 回分の実行単位。テストで `socket` の作り方を差し替えられるようにする。
+ */
+type SendUdp = (
+  packet: Uint8Array,
+  port: number,
+  address: string,
+  timeoutMs: number,
+) => Promise<void>;
+
+/**
+ * UDP ソケットを 1 つ開き、`send` の成否を `Promise` で返す。
+ *
+ * ephemeral ポートで開き、送信後に閉じる。`send` が失敗しても `close` は行う。
+ * ソケット作成・`bind` 失敗は `operation_failed` として扱う。
+ */
+async function createDefaultSocket(): Promise<{
+  send: (packet: Uint8Array, port: number, address: string) => Promise<void>;
+  close: () => void;
+} | null> {
+  let socket: ReturnType<typeof createSocket> | null = null;
+  try {
+    socket = createSocket("udp4");
+  } catch {
+    return null;
+  }
+  const bound = new Promise<void>((resolve, reject) => {
+    socket!.once("error", reject);
+    socket!.bind(0, () => {
+      socket!.removeListener("error", reject);
+      resolve();
+    });
+  });
+  return {
+    async send(packet: Uint8Array, port2: number, address: string) {
+      await bound;
+      await new Promise<void>((resolve, reject) => {
+        socket!.send(packet, port2, address, (error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+    },
+    close() {
+      socket!.close();
+    },
+  };
+}
+
+/**
+ * WOL Magic Packet を UDP で送る。
+ *
+ * `send` が成功した時点で成功とする。OS の起動完了は待たない（FR-04）。上限 5 秒
+ * （NFR-07）。テストで送信単位を差し替えられるように `send` 関数を受け取れる形に
+ * する。
+ */
+/**
+ * WOL Magic Packet を UDP で送る。
+ *
+ * `send` が成功した時点で成功とする。OS の起動完了は待たない（FR-04）。上限 5 秒
+ * （NFR-07）。
+ */
+export async function sendWakeOnLan(
+  macAddress: string,
+  broadcastAddress: string,
+  port: number,
+): Promise<SingleOperationOutcome> {
+  const packet = createMagicPacket(macAddress);
+  if (packet === null) {
+    return { result: "failed", code: "invalid_configuration" };
+  }
+  const socketResult = await createDefaultSocket();
+  if (socketResult === null) {
+    return { result: "failed", code: "operation_failed" };
+  }
+  try {
+    await socketResult.send(packet, port, broadcastAddress);
+    return { result: "succeeded", code: null };
+  } catch {
+    return { result: "failed", code: "operation_failed" };
+  } finally {
+    socketResult.close();
+  }
+}
+
+/**
+ * SSH 停止の 1 回分の実行単位を作る。
+ *
+ * `ssh` を引数配列で組み立てて実行する。シェルを介さない（`docs/architecture.md` 6.3）。
+ * `BatchMode=yes` でパスワード入力をさせず、`known_hosts` を明示してホスト鍵検証を必須に
+ * する（SEC-05）。終了コード 0 を成功とする（FR-05）。`ssh` の不在は
+ * `ssh_unavailable`、その他の失敗は `operation_failed`。上限 30 秒（NFR-07）。
+ */
+export function createShutdownOverSsh(
+  sshBinary: string,
+  timeoutMs = sshTimeoutMs,
+): (target: {
+  readonly ssh: {
+    readonly host: string;
+    readonly port: number;
+    readonly user: string;
+    readonly shutdownCommand: string;
+  };
+  readonly runtime: {
+    readonly sshIdentityFile: string;
+    readonly sshKnownHostsFile: string;
+  };
+}) => Promise<SingleOperationOutcome> {
+  return async (target) => {
+    const args = [
+      "-i",
+      target.runtime.sshIdentityFile,
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "StrictHostKeyChecking=yes",
+      "-o",
+      `UserKnownHostsFile=${target.runtime.sshKnownHostsFile}`,
+      "-p",
+      String(target.ssh.port),
+      `${target.ssh.user}@${target.ssh.host}`,
+      target.ssh.shutdownCommand,
+    ];
+    return new Promise<SingleOperationOutcome>((resolve) => {
+      let settled = false;
+      const settle = (outcome: SingleOperationOutcome) => {
+        if (settled) return;
+        settled = true;
+        resolve(outcome);
+      };
+      const child = spawn(sshBinary, args, { stdio: "ignore" });
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        settle({ result: "failed", code: "operation_failed" });
+      }, timeoutMs);
+      timer.unref?.();
+      child.once("error", (error) => {
+        const code = (error as NodeJS.ErrnoException).code;
+        settle(
+          code === "ENOENT"
+            ? { result: "failed", code: "ssh_unavailable" }
+            : { result: "failed", code: "operation_failed" },
+        );
+      });
+      child.once("exit", (code, signal) => {
+        if (code === 0) {
+          settle({ result: "succeeded", code: null });
+        } else {
+          void signal;
+          settle({ result: "failed", code: "operation_failed" });
+        }
+      });
+    });
+  };
+}
+
 /**
  * 進行中の死活確認の単位。
  *
  * `error` は TCP 接続の失敗理由。判定は接続成否だけで行うため、内容は分岐に使わない。
- * 成功でも失敗でも `ServerState` へ畳めて返す。
+ * 成功でも失敗でも `ServerState` ぽ返す。
  */
 type InFlightCheck = Promise<ServerState>;
 function checkOnce(host: string, port: number): Promise<ServerState> {
@@ -90,7 +311,8 @@ export type StatusChecker = {
   /**
    * 全サーバーの状態をまとめて確認する。
    *
-   * 全台を並列に確認するが、同時実行は `checkConcurrency` に抑える（NFR-08）。
+   * 全台を並列に確認するが、同時実行は `checkConcurrency` に抑える（NFR-08）。結果は
+   * 設定順の `Map` で返す。
    */
   checkAll(
     servers: ReadonlyArray<{ id: string; ssh: { host: string; port: number } }>,
