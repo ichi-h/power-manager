@@ -323,6 +323,19 @@ async function runBatch(
   const targets = resolveBatchTargets(config.servers, scope);
   if (targets.length === 0) return batchFailure(...invalidBatch);
 
+  // 確認ダイアログに出した集合と、いま確定した集合が一致するかを照合する。確認のあとで
+  // 設定が再読込されたり対象の所属が変わったりしても、利用者が承認していないサーバーを
+  // 停止しない（SEC-07）。`confirmed` が無い要求は照合しない（確認を挟まない起動）。
+  const rawConfirmed = form.get('confirmed');
+  if (typeof rawConfirmed === 'string') {
+    const confirmed = rawConfirmed.split(',');
+    const current = targets.map((target) => target.id);
+    const sameSet =
+      confirmed.length === current.length &&
+      current.every((id) => confirmed.includes(id));
+    if (!sameSet) return batchFailure(...targetsChanged);
+  }
+
   const outcome = await requireOperator(context).operateAll(
     scope,
     operation,
@@ -366,6 +379,18 @@ const invalidBatch = [
   'invalid_request',
   '対象を確定できませんでした。画面を再読み込みしてから操作し直してください。',
   400,
+] as const;
+
+/**
+ * 確認した集合と、いま確定した集合が食い違ったときの応答内容（状態コードは 409）。
+ *
+ * 確認ダイアログに出した対象と、実際に停止する対象がずれると、利用者が承認していない
+ * サーバーを停止し得る。操作は行わず、画面の再読み込みを促す（SEC-07）。
+ */
+const targetsChanged = [
+  'targets_changed',
+  '対象が変わりました。画面を再読み込みしてから操作し直してください。',
+  409,
 ] as const;
 
 /**
@@ -868,6 +893,12 @@ function BatchControls({
       // 対象の表示名を列挙し、確認は 1 回だけ出す（FR-11, SEC-07）。
       const listed = targets.map((target) => target.name).join('、');
       if (!window.confirm(`次のサーバーを停止しますか: ${listed}`)) return;
+      // 確認した対象を送り、action 側で確定した集合と照合させる。確認のあとに設定が
+      // 変わっても、承認していないサーバーを停止しないためである。
+      const confirmed = event.currentTarget.elements.namedItem('confirmed');
+      if (confirmed instanceof HTMLInputElement) {
+        confirmed.value = targets.map((target) => target.id).join(',');
+      }
     }
     fetcher.submit(event.currentTarget);
   };
@@ -888,6 +919,9 @@ function BatchControls({
           />
           {scope.type === 'group' ? (
             <input type="hidden" name="scopeId" value={scope.id} />
+          ) : null}
+          {operation === 'shutdown' ? (
+            <input type="hidden" name="confirmed" defaultValue="" />
           ) : null}
           <button type="submit" disabled={running || targets.length === 0}>
             {scope.type === 'all' ? '全台' : 'グループ'}

@@ -500,6 +500,51 @@ describe('一括操作の action', () => {
     expect(operateAll).not.toHaveBeenCalled();
   });
 
+  test('確認した集合と確定した集合が違えば操作せず 409 を返す', async () => {
+    // 確認ダイアログに 2 台を出したあとで対象が 1 台に減った場合を模す。
+    const { operateAll, args } = actionArgs({
+      intent: 'shutdown-group',
+      scopeKind: 'group',
+      scopeId: 'storage',
+      confirmed: 'nas',
+    });
+    // 呼び出し側の確認集合は nas だけだが、storage の確定集合は nas と test-01。
+    const response = (await action(args)) as Response;
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: 'targets_changed',
+      message: expect.any(String),
+    });
+    expect(operateAll).not.toHaveBeenCalled();
+  });
+
+  test('確認した集合が確定した集合と同じなら操作する', async () => {
+    const { operateAll, args } = actionArgs(
+      {
+        intent: 'shutdown-group',
+        scopeKind: 'group',
+        scopeId: 'storage',
+        confirmed: 'nas,test-01',
+      },
+      {
+        operateAll: async (_scope, operation, targets) => ({
+          records: targets.map((target) => ({
+            at: '2026-01-02T03:04:05.000Z',
+            target: { type: 'server' as const, id: target.id },
+            operation,
+            result: 'succeeded' as const,
+            code: null,
+          })),
+          summary: { ok: targets.length, failed: 0, skipped: 0 },
+        }),
+      },
+    );
+
+    const response = (await action(args)) as Response;
+    expect(response.status).toBe(200);
+    expect(operateAll).toHaveBeenCalledTimes(1);
+  });
+
   test('成功応答と失敗応答を取り違えない（画面の型判定）', () => {
     const success = {
       target: { type: 'all' },

@@ -503,7 +503,11 @@ describe('一括操作', () => {
     await vi.waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
     const form = onAction.mock.calls[0]?.[0] as FormData;
     expect(form.get('intent')).toBe('shutdown-group');
+    // 確認した対象を送り、action 側で確定した集合と照合させる（SEC-07）。
+    expect(form.get('confirmed')).toBe('nas,test-01');
   });
+
+
 
   test('完了後に対象ごとの結果と要約を出す', async () => {
     renderDashboard(loaderData(), {
