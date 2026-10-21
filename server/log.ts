@@ -11,7 +11,7 @@
 export type RequestFailureCode =
   /** action の Origin が公開 Origin と一致しない（CSRF 検査）。 */
   | "csrf_rejected"
-  /** Origin ヘッダーの解釈失敗など、React Router が要求を拒否した。 */
+  /** Origin ヘッダーの解釈失敗、405、想定内の 404 など、要求側の問題で拒否した。 */
   | "request_rejected"
   /** 未捕捉の例外。 */
   | "internal_error";
@@ -33,10 +33,27 @@ function isCsrfRejection(error: unknown): boolean {
 }
 
 /**
- * `reason` に載せてよいのは 1 行に収まる短い説明だけにする。
+ * `isRouteErrorResponse` 相当の判定。
+ *
+ * React Router は 404・405 などの想定内の拒否を `ErrorResponseImpl`（`Error` でも
+ * `Response` でもない、`status` を持つオブジェクト）で投げる。`instanceof Error` だけで
+ * 判定すると、これらが `internal_error` として記録され、内部障害と区別できなくなる。
+ * ライブラリの非公開クラスを参照せず、必要な形だけを検査する。
+ */
+function isRouteErrorResponseLike(
+  error: unknown,
+): error is { status: number; statusText?: string } {
+  if (typeof error !== "object" || error === null) return false;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" && status >= 400 && status <= 599;
+}
+
+/**
+ * 1 行に収まる短い説明を作る。
  * 値・ヘッダー・スタック・パスは載せない（SEC-05）。200 文字を超えたら切り詰める。
  */
 export function describeError(error: unknown): string {
+  if (isRouteErrorResponseLike(error)) return `status ${error.status}`;
   if (!(error instanceof Error)) return "unknown";
   if (error.name === "AbortError") return "aborted";
 
@@ -48,6 +65,8 @@ export function describeError(error: unknown): string {
 /** 失敗の理由を `code` へ分類する。 */
 export function classifyRequestFailure(error: unknown): RequestFailureCode {
   if (isCsrfRejection(error)) return "csrf_rejected";
+  // 405（action を持たないパスへの POST）などは想定内の拒否であり、内部障害ではない。
+  if (isRouteErrorResponseLike(error)) return "request_rejected";
   // React Router は Origin ヘッダーが解釈できない場合も `Error` を投げる。
   if (error instanceof Error && error.message.includes("origin")) return "request_rejected";
   return "internal_error";

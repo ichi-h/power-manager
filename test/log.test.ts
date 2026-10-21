@@ -21,6 +21,23 @@ describe("リクエスト失敗の分類", () => {
     expect(classifyRequestFailure("文字列")).toBe("internal_error");
     expect(classifyRequestFailure(undefined)).toBe("internal_error");
   });
+
+  test("404・405 などの想定内の拒否を internal_error にしない", () => {
+    // React Router は `ErrorResponseImpl`（`Error` でも `Response` でもない）を投げる。
+    // これを内部障害として記録すると、実際の不具合がログから埋もれる。
+    const notAllowed = Object.assign(new Error("Invalid request method \"POST\""), {
+      status: 405,
+      statusText: "Method Not Allowed",
+    });
+
+    expect(classifyRequestFailure(notAllowed)).toBe("request_rejected");
+    expect(describeError(notAllowed)).toBe("status 405");
+  });
+
+  test("status を持たないオブジェクトは internal_error のままにする", () => {
+    expect(classifyRequestFailure({ status: "405" })).toBe("internal_error");
+    expect(classifyRequestFailure({ status: 200 })).toBe("internal_error");
+  });
 });
 
 describe("reason の整形", () => {

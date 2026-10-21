@@ -2,7 +2,7 @@
  * HTTP サーバーのエントリポイント。
  *
  * 起動シーケンスのうち、ここでは待受とシグナル処理のみを扱う。
- * 環境変数の検証と load context の組み立ては `server/app.ts` / `app/lib/config.server.ts` が担う。
+ * 環境変数の検証は `server/startup.ts`、load context の組み立ては `server/app.ts` が担う。
  *
  * CLI 引数は受け付けない（NFR-06）。設定は環境変数だけで渡す。
  */

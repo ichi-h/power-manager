@@ -313,7 +313,7 @@ ssh -i <identityFile>
 | `config_reload`   | `result`、`reason`（失敗時）、`schedules`（再計算した予約数）     |
 | `request_failed`  | `code`（`csrf_rejected` / `request_rejected` / `internal_error`）、`reason` |
 
-`request_failed` はリクエスト処理中の失敗（action の Origin 不一致、静的配信の失敗、未捕捉の例外）を 1 行で記録する。`reason` は例外メッセージを 1 行に潰して 200 文字で切り詰めたもので、スタックトレースは出さない。React Router の既定のハンドラは `console.error(error)` でスタックを複数行に出すため、`server/app.ts` の `withErrorHandler` が `build.entry.module.handleError` を差し替えている。`createRequestListener` に `mode: "production"` を明示するのも、開発用のエラー表示を残さないためである。
+`request_failed` はリクエスト処理中の失敗（action の Origin 不一致、静的配信の失敗、未捕捉の例外）を 1 行で記録する。`code` は `csrf_rejected`（Origin 不一致）/ `request_rejected`（Origin ヘッダーの解釈失敗、404・405 など想定内の拒否）/ `internal_error`（未捕捉の例外）に分ける。`reason` は例外メッセージを 1 行に潰して 200 文字で切り詰めたもので、スタックトレースは出さない。React Router が投げる `ErrorResponseImpl`（404・405 など）は `Error` でも `Response` でもないため、`status` の有無で判定して `status 405` のような短い理由にする。React Router の既定のハンドラは `console.error(error)` でスタックを複数行に出すため、`server/app.ts` の `withErrorHandler` が `build.entry.module.handleError` を差し替えている。`createRequestListener` に `mode: "production"` を明示するのも、開発用のエラー表示を残さないためである。
 
 `Authorization`、パスワード、ハッシュ、秘密鍵、停止コマンドの内容、環境変数値は出力しない（SEC-05）。ログの保持期間と保存先はホストのログ収集機構に委ねる。
 
