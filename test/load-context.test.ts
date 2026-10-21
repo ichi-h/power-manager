@@ -10,7 +10,7 @@ const environment = {
   POWER_MANAGER_PORT: "8080",
   POWER_MANAGER_PUBLIC_ORIGIN: "https://power.example.ts.net",
   POWER_MANAGER_AUTH_USERNAME: "admin",
-  POWER_MANAGER_AUTH_PASSWORD_HASH: "$argon2id$v=19$m=65536,t=2,p=1$c2FsdA$aGFzaA",
+  POWER_MANAGER_AUTH_PASSWORD_HASH: "$argon2id$v=19$m=65536,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM",
   POWER_MANAGER_SSH_IDENTITY_FILE: "/run/secrets/power-manager/id_ed25519",
   POWER_MANAGER_SSH_KNOWN_HOSTS_FILE: "/etc/power-manager/known_hosts",
 };

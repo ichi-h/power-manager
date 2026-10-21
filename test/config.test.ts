@@ -9,7 +9,7 @@ function validEnvironment(): Record<string, string> {
     POWER_MANAGER_PORT: "8080",
     POWER_MANAGER_PUBLIC_ORIGIN: "https://power.example.ts.net",
     POWER_MANAGER_AUTH_USERNAME: "admin",
-    POWER_MANAGER_AUTH_PASSWORD_HASH: "$argon2id$v=19$m=65536,t=2,p=1$c2FsdA$aGFzaA",
+    POWER_MANAGER_AUTH_PASSWORD_HASH: "$argon2id$v=19$m=65536,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM",
     POWER_MANAGER_SSH_IDENTITY_FILE: "/run/secrets/power-manager/id_ed25519",
     POWER_MANAGER_SSH_KNOWN_HOSTS_FILE: "/etc/power-manager/known_hosts",
   };
@@ -187,14 +187,59 @@ describe("パスワードハッシュ", () => {
     ).toThrow(/POWER_MANAGER_AUTH_PASSWORD_HASH/);
   });
 
-  test.each(["plain-password", "$argon2id$", "$argon2id$v=19$m=65536,t=2,p=1$c2FsdA"])(
-    "形式不正の %s を拒否する",
-    (value) => {
-      expect(() =>
-        loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_AUTH_PASSWORD_HASH: value }),
-      ).toThrow(/POWER_MANAGER_AUTH_PASSWORD_HASH/);
-    },
-  );
+  test.each([
+    "plain-password",
+    "$argon2id$",
+    "$argon2id$v=19$m=65536,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg",
+    "$argon2id$v=19$m=65536,t=2$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM",
+    "$argon2id$m=65536,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM",
+  ])("構造不正の %s を拒否する", (value) => {
+    expect(() =>
+      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_AUTH_PASSWORD_HASH: value }),
+    ).toThrow(/POWER_MANAGER_AUTH_PASSWORD_HASH/);
+  });
+
+  test("argon2.hash() の出力（m,p,t 順）を受け付ける", async () => {
+    const argon2 = await import("argon2");
+    const hash = await argon2.hash("password", { type: argon2.argon2id });
+
+    // node-argon2 は `m,p,t` の順で出す。パラメータ順に依存しないことを固定する。
+    expect(hash.startsWith("$argon2id$v=19$m=")).toBe(true);
+    expect(
+      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_AUTH_PASSWORD_HASH: hash })
+        .authPasswordHash,
+    ).toBe(hash);
+  });
+
+  test.each([
+    // 弱いパラメータは事実上総当たり可能になる。
+    ["$argon2id$v=19$m=8,t=1,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM"],
+    ["$argon2id$v=19$m=19455,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM"],
+    ["$argon2id$v=19$m=65536,t=1,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM"],
+    ["$argon2id$v=19$m=65536,t=2,p=5$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM"],
+    // 過大なパラメータは未認証リクエストごとの検証でメモリを枯渇させる。
+    ["$argon2id$v=19$m=1048576,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM"],
+    ["$argon2id$v=19$m=262145,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM"],
+    ["$argon2id$v=19$m=65536,t=11,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM"],
+    // 短いソルト・短いハッシュは argon2.verify が例外を投げる。
+    ["$argon2id$v=19$m=65536,t=2,p=1$c2FsdA$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM"],
+    ["$argon2id$v=19$m=65536,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg$aGFzaA"],
+  ])("パラメータ範囲外の %s を拒否する", (value) => {
+    expect(() =>
+      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_AUTH_PASSWORD_HASH: value }),
+    ).toThrow(/POWER_MANAGER_AUTH_PASSWORD_HASH/);
+  });
+
+  test.each([
+    "POWER_MANAGER_AUTH_PASSWORD_HASH",
+    "POWER_MANAGER_SSH_IDENTITY_FILE",
+    "POWER_MANAGER_CONFIG_PATH",
+  ])("メッセージに %s の値を含めない", (name) => {
+    const secret = "very-secret-value";
+    expect(() => loadRuntimeConfig({ ...validEnvironment(), [name]: secret })).toThrow(
+      expect.objectContaining({ message: expect.not.stringContaining(secret) }),
+    );
+  });
 });
 
 describe("絶対パス", () => {

@@ -69,9 +69,73 @@ export class ConfigurationError extends Error {
 /** Origin のホスト名として解釈させない予約語。`Origin: null` との完全一致を防ぐ。 */
 const reservedHostnames = new Set(["null", "undefined", "true", "false"]);
 
-/** Argon2id の標準的な encoded 形式（`$argon2id$v=..$m=..,t=..,p=..$salt$hash`）。 */
-const argon2idHashPattern =
-  /^\$argon2id\$v=\d+\$m=\d+,t=\d+,p=\d+\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+$/;
+/**
+ * Argon2id ハッシュのパラメータ許容範囲。
+ *
+ * 下限は弱いハッシュ（`m=8,t=1` は事実上総当たり可能）を、上限は未認証リクエストごとの
+ * 検証でメモリを枯渇させる過大な設定を弾くために置く（SEC-05, `docs/security.md` 2 章）。
+ */
+const argon2idParameterRanges = {
+  /** メモリコスト（KiB）。OWASP の Argon2id 推奨下限 19 MiB、上限 256 MiB。 */
+  m: { min: 19_456, max: 262_144 },
+  /** 反復回数。 */
+  t: { min: 2, max: 10 },
+  /** 並列度。 */
+  p: { min: 1, max: 4 },
+} as const;
+
+/** ソルト・ハッシュの最低バイト数。Base64 換算でソルト 22 文字、ハッシュ 43 文字に対応する。 */
+const argon2idMinimumSaltBytes = 16;
+const argon2idMinimumHashBytes = 32;
+
+/** パラメータの順序を固定しないために、`$` 区切りのフィールド単位で検査する。 */
+const argon2idVersionPattern = /^v=\d+$/;
+const argon2idParameterPattern = /^[m,t,p]=\d+(,[m,t,p]=\d+)*$/;
+/** Base64（標準・URL 安全）とパディングを許す。`node-argon2` の出力はパディングなし。 */
+const argon2idBase64Pattern = /^[A-Za-z0-9+/_-]+={0,2}$/;
+
+/** Base64 文字列が表現するバイト数を求める。 */
+function base64ByteLength(value: string): number {
+  const unpadded = value.replace(/=+$/, "");
+  return Math.floor((unpadded.length * 3) / 4);
+}
+
+/**
+ * Argon2id の encoded 形式を検証する。
+ *
+ * `node-argon2` の `hash()` は `m,p,t` の順で出力するため、パラメータ順に依存させない
+ * （`docs/security.md` 2 章は「`$argon2id$` で始まる文字列」以上の制約を課していない）。
+ * ただし構造（6 フィールド・各フィールドの文字種・パラメータ範囲）は厳格に見る。
+ */
+function isValidArgon2idHash(value: string): boolean {
+  const fields = value.split("$");
+  if (fields.length !== 6) return false;
+
+  const [prefix, algorithm, version, parameters, salt, hash] = fields;
+  if (prefix !== "" || algorithm !== "argon2id") return false;
+  if (version === undefined || parameters === undefined) return false;
+  if (salt === undefined || hash === undefined) return false;
+  if (!argon2idVersionPattern.test(version)) return false;
+  if (!argon2idParameterPattern.test(parameters)) return false;
+  if (!argon2idBase64Pattern.test(salt) || !argon2idBase64Pattern.test(hash)) return false;
+  if (base64ByteLength(salt) < argon2idMinimumSaltBytes) return false;
+  if (base64ByteLength(hash) < argon2idMinimumHashBytes) return false;
+
+  // パラメータは重複しない前提で読み、各値を範囲内に限定する。
+  const values = new Map<string, number>();
+  for (const pair of parameters.split(",")) {
+    const [key, raw] = pair.split("=");
+    if (key === undefined || raw === undefined) return false;
+    values.set(key, Number(raw));
+  }
+  for (const [key, range] of Object.entries(argon2idParameterRanges)) {
+    const parsed = values.get(key);
+    if (parsed === undefined) return false;
+    if (!Number.isInteger(parsed) || parsed < range.min || parsed > range.max) return false;
+  }
+
+  return true;
+}
 
 const requiredMessage = { error: "設定されていません" };
 const emptyMessage = { message: "空です" };
@@ -172,10 +236,10 @@ const publicOriginValue = requiredString().transform((value, ctx) => {
   return parsed;
 });
 
-const passwordHashValue = requiredString().refine(
-  (value) => argon2idHashPattern.test(value),
-  { message: "$argon2id$ で始まる Argon2id のハッシュを指定してください" },
-);
+const passwordHashValue = requiredString().refine(isValidArgon2idHash, {
+  message:
+    "Argon2id のハッシュ（$argon2id$v=..$m=..,t=..,p=..$salt$hash、m=19456-262144, t=2-10, p=1-4）を指定してください",
+});
 
 /**
  * 環境変数のスキーマ。ここに並ぶ変数がすべて揃わなければ起動しない（NFR-06）。
