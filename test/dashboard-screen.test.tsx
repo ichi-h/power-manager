@@ -60,8 +60,10 @@ function renderDashboard(
   options: {
     action?: () => OperationResult | Response;
     onStatusLoad?: () => void;
+    onHistoryLoad?: () => void;
     onAction?: (formData: FormData) => void;
     statusStates?: Record<string, string>;
+    history?: () => { records: ReadonlyArray<PowerOperationRecord> } | Response;
   } = {},
 ) {
   const Stub = createRoutesStub([
@@ -91,6 +93,13 @@ function renderDashboard(
             'test-01': 'online',
           },
         };
+      },
+    },
+    {
+      path: '/api/history',
+      loader: () => {
+        options.onHistoryLoad?.();
+        return options.history?.() ?? { records: data.recent ?? [] };
       },
     },
   ]);
@@ -375,5 +384,109 @@ describe('状態の自動更新', () => {
     await advance(statusRefreshIntervalMs);
     await advanceUntil(() => calls === 2);
     expect(calls).toBe(2);
+  });
+});
+
+describe('再現（b356 で見つかった欠陥）', () => {
+  test('実行中（busy）の単体停止は「実行中（拒否）」と表示する（FR-07）', async () => {
+    renderDashboard(loaderData(), {
+      action: () => ({
+        target: 'nas',
+        operation: 'shutdown',
+        result: 'rejected',
+      }),
+    });
+
+    fireEvent.click(
+      (await screen.findAllByRole('button', { name: '停止' }))[0]!,
+    );
+
+    expect(await screen.findByText('停止: 実行中（拒否）')).toBeDefined();
+    expect(screen.queryByText('結果: スキップ')).toBeNull();
+  });
+
+  test('起動→停止の順に操作したとき、行内には最後の操作結果だけを出す（FR-07）', async () => {
+    let mode: 'wake' | 'shutdown' = 'wake';
+    renderDashboard(loaderData(), {
+      action: () => ({
+        target: 'nas',
+        operation: mode,
+        result: mode === 'wake' ? 'succeeded' : 'failed',
+      }),
+      onAction: (form) => {
+        mode = form.get('intent') as 'wake' | 'shutdown';
+      },
+    });
+
+    fireEvent.click(
+      (await screen.findAllByRole('button', { name: '起動' }))[0]!,
+    );
+    expect(await screen.findByText('起動: 成功')).toBeDefined();
+
+    fireEvent.click(
+      (await screen.findAllByRole('button', { name: '停止' }))[0]!,
+    );
+
+    expect(await screen.findByText('停止: 失敗')).toBeDefined();
+    expect(screen.queryByText('起動: 成功')).toBeNull();
+  });
+
+  test('画面を開いたまま実行した操作の結果が「最近の実行」に現れる（FR-02, FR-13）', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const executed = record({
+      at: '2026-01-02T03:04:05.000Z',
+      target: { type: 'server', id: 'nas' },
+      operation: 'wake',
+      result: 'succeeded',
+      code: null,
+    });
+    let history: ReadonlyArray<PowerOperationRecord> = [];
+    renderDashboard(loaderData(), {
+      history: () => ({ records: history }),
+    });
+
+    expect(screen.queryByText('まだ実行はありません。')).toBeDefined();
+
+    history = [executed];
+    await advance(statusRefreshIntervalMs);
+    await advanceUntil(() => screen.queryByText('結果: 成功') !== null);
+
+    expect(screen.getByText('操作: 起動')).toBeDefined();
+    expect(screen.queryByText('まだ実行はありません。')).toBeNull();
+  });
+
+  test('「最近の実行」の理由は利用者向け文言で出し、未知の分類は出さない（SEC-05）', async () => {
+    renderDashboard(
+      loaderData({
+        recent: [
+          record({ result: 'failed', code: 'operation_failed' }),
+          record({
+            at: '2026-01-01T00:00:00.000Z',
+            result: 'failed',
+            code: 'ssh_unavailable',
+          }),
+          record({
+            at: '2026-01-01T00:00:01.000Z',
+            result: 'skipped',
+            code: 'busy',
+          }),
+          record({
+            at: '2026-01-01T00:00:02.000Z',
+            result: 'succeeded',
+            code: null,
+          }),
+        ],
+      }),
+    );
+
+    expect(await screen.findByText('理由: 操作に失敗しました')).toBeDefined();
+    expect(screen.getByText('理由: 対象に接続できません')).toBeDefined();
+    expect(
+      screen.getByText('理由: 実行中のためスキップしました'),
+    ).toBeDefined();
+    // 成功時・未知の分類では理由を出さない。
+    expect(
+      screen.queryByText(/operation_failed|ssh_unavailable|busy/),
+    ).toBeNull();
   });
 });

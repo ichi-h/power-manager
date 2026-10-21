@@ -230,7 +230,9 @@ describe('一覧画面の action', () => {
 
   test('実行中（busy）は「実行中（拒否）」へ畳み込む', () => {
     expect(toResultKind({ result: 'failed', code: 'busy' })).toBe('rejected');
-    expect(toResultKind({ result: 'skipped', code: 'busy' })).toBe('skipped');
+    // 単体操作の busy は操作器が {result:'skipped', code:'busy'} を返す
+    // （app/lib/power.server.ts）。画面では「スキップ」ではなく拒否として扱う。
+    expect(toResultKind({ result: 'skipped', code: 'busy' })).toBe('rejected');
     expect(toResultKind({ result: 'failed', code: 'operation_failed' })).toBe(
       'failed',
     );
