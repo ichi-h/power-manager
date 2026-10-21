@@ -9,7 +9,11 @@
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { ConfigurationError, loadRuntimeConfig } from "../app/lib/config.server.ts";
+import {
+  ConfigurationError,
+  loadRuntimeConfig,
+  type RuntimeConfig,
+} from "../app/lib/config.server.ts";
 import { createAppListener } from "./app.ts";
 import { serveStatic } from "./static.ts";
 
@@ -17,22 +21,31 @@ import { serveStatic } from "./static.ts";
 const configurationErrorExitCode = 78;
 const forcedExitMilliseconds = 5_000;
 
-let runtime;
-try {
-  runtime = loadRuntimeConfig();
-} catch (error) {
-  if (!(error instanceof ConfigurationError)) throw error;
+/**
+ * 環境変数を検証し、失敗したら待受を開始せずに終了コード 78 で終了する（NFR-05, NFR-06）。
+ *
+ * 検証以外の例外（実装の不具合など）は設定不備ではないため、握りつぶさずに再送出する。
+ * これにより、設定不備だけが再起動抑止の対象になる。
+ */
+function startRuntime(): RuntimeConfig {
+  try {
+    return loadRuntimeConfig();
+  } catch (error) {
+    if (!(error instanceof ConfigurationError)) throw error;
 
-  // 待受を開始する前に終了する。設定不備で再起動ループへ入らないようにする（NFR-05）。
-  console.error(
-    JSON.stringify({
-      event: "startup_failed",
-      code: "invalid_configuration",
-      reason: error.message,
-    }),
-  );
-  process.exit(configurationErrorExitCode);
+    console.error(
+      JSON.stringify({
+        event: "startup_failed",
+        code: "invalid_configuration",
+        reason: error.message,
+      }),
+    );
+    process.exit(configurationErrorExitCode);
+  }
 }
+
+// 引数は解釈しない。設定は環境変数だけで渡す（NFR-06）。
+const runtime = startRuntime();
 
 const requestListener = createAppListener(runtime);
 

@@ -7,12 +7,32 @@
  */
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 const port = Number(process.env.SMOKE_PORT ?? 18080);
 const origin = `http://127.0.0.1:${port}`;
 const serverEntry = "server/index.ts";
 const timeoutMilliseconds = 30_000;
+/** 設定エラーを表す sysexits.h の EX_CONFIG。 */
+const configurationErrorExitCode = 78;
+
+/**
+ * 起動に必要な環境変数一式。設定 JSON はこの時点ではまだ読まれないため、
+ * 存在するファイルを指しておけばよい。
+ */
+const runtimeEnvironment = {
+  NODE_ENV: "production",
+  POWER_MANAGER_CONFIG_PATH:
+    process.env.SMOKE_CONFIG_PATH ?? path.resolve("package.json"),
+  POWER_MANAGER_PORT: String(port),
+  POWER_MANAGER_PUBLIC_ORIGIN: `https://localhost:${port}`,
+  POWER_MANAGER_AUTH_USERNAME: "smoke",
+  POWER_MANAGER_AUTH_PASSWORD_HASH:
+    "$argon2id$v=19$m=65536,t=2,p=1$c21va2VzYWx0$c21va2VoYXNo",
+  POWER_MANAGER_SSH_IDENTITY_FILE: "/dev/null",
+  POWER_MANAGER_SSH_KNOWN_HOSTS_FILE: "/dev/null",
+};
 
 if (!existsSync("build/server/index.js")) {
   console.error("build/server/index.js がありません。先に npm run build を実行してください。");
@@ -20,11 +40,7 @@ if (!existsSync("build/server/index.js")) {
 }
 
 const child = spawn(process.execPath, ["--conditions=react-router", serverEntry], {
-  env: {
-    ...process.env,
-    NODE_ENV: "production",
-    POWER_MANAGER_PORT: String(port),
-  },
+  env: { ...process.env, ...runtimeEnvironment },
   stdio: ["ignore", "pipe", "pipe"],
 });
 
@@ -77,6 +93,43 @@ function stopServer() {
   });
 }
 
+/**
+ * 不正な環境変数では待受を開始せず、終了コード 78 で終了することを確認する（NFR-05, NFR-06）。
+ */
+function checkConfigurationError() {
+  return new Promise((resolve, reject) => {
+    const invalid = spawn(process.execPath, ["--conditions=react-router", serverEntry], {
+      env: { ...process.env, ...runtimeEnvironment, POWER_MANAGER_PORT: "not-a-port" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let invalidStderr = "";
+    invalid.stderr.on("data", (chunk) => {
+      invalidStderr += chunk;
+    });
+
+    const timer = setTimeout(() => {
+      invalid.kill("SIGKILL");
+      reject(new Error("不正な設定で起動が終了しませんでした"));
+    }, 10_000);
+
+    invalid.once("exit", (code) => {
+      clearTimeout(timer);
+      if (code !== configurationErrorExitCode) {
+        reject(
+          new Error(`不正な設定の終了コードが ${code} でした（期待値 ${configurationErrorExitCode}）`),
+        );
+        return;
+      }
+      if (!invalidStderr.includes('"code":"invalid_configuration"')) {
+        reject(new Error(`startup_failed のログに invalid_configuration が含まれていません:\n${invalidStderr}`));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
 try {
   await waitForStarted();
   const { code } = await stopServer();
@@ -86,6 +139,7 @@ try {
   if (!stdout.includes('"event":"started"')) {
     throw new Error(`起動ログに started が含まれていません:\n${stdout}`);
   }
+  await checkConfigurationError();
   console.log("smoke: ok");
 } catch (error) {
   child.kill("SIGKILL");
