@@ -174,7 +174,7 @@ server.listen(port, "127.0.0.1");
 - action の応答は、リクエストの `Accept` に応じて JSON（`fetcher` 経由）または HTML（スクリプト無効時のフォーム送信）を返す。スクリプト無効時は従来どおり `303` で一覧へ戻す（NFR-09）。
 - `/api/status` は UI 用の内部エンドポイントであり、外部自動化向けの公開 API ではない（要件 4.2）。応答は `application/json` のみとする。
 - `/healthz` は `ok` の固定文字列のみを返し、構成・状態・バージョンを含めない（SEC-10）。
-- CSRF は React Router 内蔵の `allowedActionOrigins`（`react-router.config.ts`）と、自前の Origin 完全一致ミドルウェアの二段で検証する（SEC-03）。詳細は [セキュリティ設計](security.md)。
+- CSRF は React Router 内蔵の `allowedActionOrigins` と、自前の Origin 完全一致ミドルウェアの二段で検証する（SEC-03）。`allowedActionOrigins` はビルド時の定数（`react-router.config.ts` では空配列）で、`server/app.ts` の `withAllowedActionOrigins` が読み込み時に `publicOriginHost` を 1 要素として差し込む。詳細は [セキュリティ設計](security.md)。
 
 ### 4.1 画面構成
 

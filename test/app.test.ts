@@ -1,7 +1,7 @@
 import type { ServerBuild } from "react-router";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import { withErrorHandler } from "../server/app.ts";
+import { withAllowedActionOrigins, withErrorHandler } from "../server/app.ts";
 
 /** 差し替えに必要な最小限の形。`withErrorHandler` は他のフィールドを素通しするだけ。 */
 function fakeBuild(): ServerBuild {
@@ -53,5 +53,20 @@ describe("サーバービルドのエラーハンドラ", () => {
     expect(entryDefault).toBe(original.entry.module.default);
     // 元のビルドを書き換えない（同じプロセスで複数回読み込んでも副作用が残らない）。
     expect(original.entry.module.handleError).not.toBe(replaced.entry.module.handleError);
+  });
+});
+
+describe("allowedActionOrigins の差し替え", () => {
+  test("公開ホストを 1 要素として埋め込む", () => {
+    const build = withAllowedActionOrigins(fakeBuild(), "power.example.ts.net:8443");
+
+    expect(build.allowedActionOrigins).toEqual(["power.example.ts.net:8443"]);
+  });
+
+  test("元のビルドは書き換えない", () => {
+    const original = fakeBuild();
+    withAllowedActionOrigins(original, "power.example.ts.net");
+
+    expect(original.allowedActionOrigins).toBeUndefined();
   });
 });

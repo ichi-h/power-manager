@@ -66,7 +66,7 @@ export const middleware: Route.MiddlewareFunction[] = [authMiddleware, csrfMiddl
 
 状態を変更する操作（起動・停止・再読込）は `POST` のみ受け付ける。多重防御として次の二段を置く。
 
-1. **React Router 内蔵の保護**: `react-router.config.ts` の `allowedActionOrigins` に、`POWER_MANAGER_PUBLIC_ORIGIN` のオリジンだけを設定する。非 GET の action 要求は、同一オリジンまたは許可リストに載るオリジンからのみ受け付ける。
+1. **React Router 内蔵の保護**: `allowedActionOrigins` に `POWER_MANAGER_PUBLIC_ORIGIN` のホストだけを設定する。非 GET の action 要求は、同一オリジンまたは許可リストに載るホストからのみ受け付ける。この配列は `react-router build` の成果物に埋め込まれ、`createRequestListener` のオプションでは渡せない。`react-router.config.ts` では空配列にし、`server/app.ts` の `withAllowedActionOrigins` が読み込み時に `publicOriginHost` を差し込む。設定するのはスキーム付きの `publicOrigin` ではなく `host`（`Origin` ヘッダーの `Url.host` と照合されるため）である。`parsePublicOrigin` はワイルドカード（`*`）や `null` などの予約語を拒否するので、内蔵の照合がワイルドカードとして解釈する値は入らない。
 2. **自前の Origin ミドルウェア**: `POST`/`PUT`/`PATCH`/`DELETE` について、`Origin` ヘッダーが `POWER_MANAGER_PUBLIC_ORIGIN` と完全一致しなければ `403 Forbidden` で拒否する。
 
 - `Origin` ヘッダーが無い要求も拒否する。

@@ -53,13 +53,32 @@ export function withErrorHandler(build: ServerBuild): ServerBuild {
   };
 }
 
-async function loadServerBuild(): Promise<ServerBuild> {
-  return withErrorHandler((await import(serverBuildPath)) as ServerBuild);
+/**
+ * ビルド成果物の `allowedActionOrigins` を実行時の公開 Origin で差し替える。
+ *
+ * この配列はビルド時に埋め込まれ、`createRequestListener` のオプションでは渡せない。
+ * 空配列のままでは、自前の Origin 検証を通った要求でも React Router の CSRF 検査で
+ * 拒否される。照合対象は `Origin` ヘッダーの `host`（`Url.host`）なので、スキーム付きの
+ * `publicOrigin` ではなく `publicOriginHost` を渡す。
+ *
+ * なお React Router 側の照合はワイルドカード（`*`）を解釈するため、`*` を含まない
+ * ホストだけを受け付ける検証は `parsePublicOrigin` で済ませてある。
+ */
+export function withAllowedActionOrigins(build: ServerBuild, host: string): ServerBuild {
+  return {
+    ...build,
+    allowedActionOrigins: [host],
+  };
+}
+
+async function loadServerBuild(runtime: RuntimeConfig): Promise<ServerBuild> {
+  const build = (await import(serverBuildPath)) as ServerBuild;
+  return withErrorHandler(withAllowedActionOrigins(build, runtime.publicOriginHost));
 }
 
 export function createAppListener(runtime: RuntimeConfig) {
   return createRequestListener({
-    build: loadServerBuild,
+    build: () => loadServerBuild(runtime),
     // 明示しないと `develop` 扱いになり、開発用の挙動が残る（SEC-05）。
     mode: "production",
     getLoadContext: () => createLoadContext(runtime),
