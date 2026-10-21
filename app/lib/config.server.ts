@@ -8,13 +8,13 @@
  *   終了コード 78 で終了する（NFR-05, NFR-06）。
  * - 検証済みの値は load context（`configContext`）に載せ、loader/action から参照する。
  */
-import path from "node:path";
+import path from 'node:path';
 
-import { createContext, type RouterContext } from "react-router";
-import { z } from "zod";
+import { createContext, type RouterContext } from 'react-router';
+import { z } from 'zod';
 
 /** 実行モード。本番の環境変数ファイルでは `production` を指定する。 */
-export type NodeEnvironment = "production" | "development" | "test";
+export type NodeEnvironment = 'production' | 'development' | 'test';
 
 /**
  * 画面・loader・action へ渡してよい公開値。
@@ -93,7 +93,7 @@ export type RuntimeConfig = PublicRuntimeConfig & AuthConfig & SshConfig;
  *
  * `RouterContextProvider` はキーをオブジェクト同一性で照合するため、この共有が必要になる。
  */
-const configContextSlot = "__powerManagerConfigContext";
+const configContextSlot = '__powerManagerConfigContext';
 
 type ConfigContextRegistry = {
   [configContextSlot]?: RouterContext<PublicRuntimeConfig>;
@@ -104,14 +104,16 @@ const configContextRegistry = globalThis as unknown as ConfigContextRegistry;
 /**
  * 公開値だけを載せる。秘密値（`AuthConfig` / `SshConfig`）はここに入れない。
  */
-export const configContext: RouterContext<PublicRuntimeConfig> = (configContextRegistry[
-  configContextSlot
-] ??= createContext<PublicRuntimeConfig>());
+export const configContext: RouterContext<PublicRuntimeConfig> =
+  (configContextRegistry[configContextSlot] ??=
+    createContext<PublicRuntimeConfig>());
 
 /**
  * 公開値だけを取り出す。load context へ載せる範囲をこの関数で固定する。
  */
-export function toPublicRuntimeConfig(runtime: RuntimeConfig): PublicRuntimeConfig {
+export function toPublicRuntimeConfig(
+  runtime: RuntimeConfig,
+): PublicRuntimeConfig {
   return {
     configPath: runtime.configPath,
     port: runtime.port,
@@ -127,12 +129,14 @@ export function toPublicRuntimeConfig(runtime: RuntimeConfig): PublicRuntimeConf
  * 未設定ならフレームワークの汎用メッセージではなく、配線不整合だと分かるエラーにする。
  * 本番でここに来るのは、`getLoadContext` を通らない経路を作った場合だけである。
  */
-export function requireRuntimeConfig(context: RouterContextProviderLike): PublicRuntimeConfig {
+export function requireRuntimeConfig(
+  context: RouterContextProviderLike,
+): PublicRuntimeConfig {
   try {
     return context.get(configContext);
   } catch {
     throw new Error(
-      "実行時設定が load context にありません（server/app.ts の createLoadContext を経由していません）",
+      '実行時設定が load context にありません（server/app.ts の createLoadContext を経由していません）',
     );
   }
 }
@@ -148,12 +152,12 @@ type RouterContextProviderLike = { get: <T>(key: RouterContext<T>) => T };
 export class ConfigurationError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "ConfigurationError";
+    this.name = 'ConfigurationError';
   }
 }
 
 /** Origin のホスト名として解釈させない予約語。`Origin: null` との完全一致を防ぐ。 */
-const reservedHostnames = new Set(["null", "undefined", "true", "false"]);
+const reservedHostnames = new Set(['null', 'undefined', 'true', 'false']);
 
 /**
  * Argon2id ハッシュのパラメータ許容範囲。
@@ -182,7 +186,7 @@ const argon2idBase64Pattern = /^[A-Za-z0-9+/_-]+={0,2}$/;
 
 /** Base64 文字列が表現するバイト数を求める。 */
 function base64ByteLength(value: string): number {
-  const unpadded = value.replace(/=+$/, "");
+  const unpadded = value.replace(/=+$/, '');
   return Math.floor((unpadded.length * 3) / 4);
 }
 
@@ -194,30 +198,32 @@ function base64ByteLength(value: string): number {
  * ただし構造（6 フィールド・各フィールドの文字種・パラメータ範囲）は厳格に見る。
  */
 function isValidArgon2idHash(value: string): boolean {
-  const fields = value.split("$");
+  const fields = value.split('$');
   if (fields.length !== 6) return false;
 
   const [prefix, algorithm, version, parameters, salt, hash] = fields;
-  if (prefix !== "" || algorithm !== "argon2id") return false;
+  if (prefix !== '' || algorithm !== 'argon2id') return false;
   if (version === undefined || parameters === undefined) return false;
   if (salt === undefined || hash === undefined) return false;
   if (!argon2idVersionPattern.test(version)) return false;
   if (!argon2idParameterPattern.test(parameters)) return false;
-  if (!argon2idBase64Pattern.test(salt) || !argon2idBase64Pattern.test(hash)) return false;
+  if (!argon2idBase64Pattern.test(salt) || !argon2idBase64Pattern.test(hash))
+    return false;
   if (base64ByteLength(salt) < argon2idMinimumSaltBytes) return false;
   if (base64ByteLength(hash) < argon2idMinimumHashBytes) return false;
 
   // パラメータは重複しない前提で読み、各値を範囲内に限定する。
   const values = new Map<string, number>();
-  for (const pair of parameters.split(",")) {
-    const [key, raw] = pair.split("=");
+  for (const pair of parameters.split(',')) {
+    const [key, raw] = pair.split('=');
     if (key === undefined || raw === undefined) return false;
     values.set(key, Number(raw));
   }
   for (const [key, range] of Object.entries(argon2idParameterRanges)) {
     const parsed = values.get(key);
     if (parsed === undefined) return false;
-    if (!Number.isInteger(parsed) || parsed < range.min || parsed > range.max) return false;
+    if (!Number.isInteger(parsed) || parsed < range.min || parsed > range.max)
+      return false;
   }
 
   return true;
@@ -225,12 +231,12 @@ function isValidArgon2idHash(value: string): boolean {
 
 /** 検証メッセージ。同じ文言を複数箇所で使うため定数にする。 */
 const messages = {
-  required: "設定されていません",
-  empty: "空です",
-  portRange: "1 から 65535 の整数で指定してください",
-  absolutePath: "絶対パスを正規化した形で指定してください",
-  username: "英数字と . _ - だけを使い、64 文字以内で指定してください",
-  surroundingWhitespace: "前後に空白を含めないでください",
+  required: '設定されていません',
+  empty: '空です',
+  portRange: '1 から 65535 の整数で指定してください',
+  absolutePath: '絶対パスを正規化した形で指定してください',
+  username: '英数字と . _ - だけを使い、64 文字以内で指定してください',
+  surroundingWhitespace: '前後に空白を含めないでください',
 } as const;
 
 /**
@@ -257,7 +263,7 @@ function absolutePath() {
   return requiredString().refine(
     (value) =>
       path.isAbsolute(value) &&
-      !value.includes("\0") &&
+      !value.includes('\0') &&
       // ルート直下の `/` だけは末尾スラッシュを許す。
       (value === path.sep || !value.endsWith(path.sep)) &&
       path.normalize(value) === value,
@@ -280,7 +286,7 @@ type PublicOrigin = {
  * VPN 内の任意ホストからの `POST` が第 1 層を通過してしまう。完全一致だけを許可する。
  */
 function isAllowedActionOriginPattern(host: string): boolean {
-  return host !== "" && !host.includes("*");
+  return host !== '' && !host.includes('*');
 }
 
 /**
@@ -300,25 +306,28 @@ function parsePublicOrigin(value: string): PublicOrigin | null {
   }
 
   // 資格情報とパスを含む URL は、Origin の指定ミスとして拒否する。
-  if (url.username !== "" || url.password !== "") return null;
-  if (url.pathname !== "/" || url.search !== "" || url.hash !== "") return null;
+  if (url.username !== '' || url.password !== '') return null;
+  if (url.pathname !== '/' || url.search !== '' || url.hash !== '') return null;
 
   // ポート 0 は「空きポートで待受」の意味になり、Origin の指定として無効である。
-  if (url.port === "0") return null;
+  if (url.port === '0') return null;
 
   const hostname = url.hostname;
-  if (hostname === "") return null;
+  if (hostname === '') return null;
   if (reservedHostnames.has(hostname)) return null;
   // 末尾ドットはブラウザが送る `Origin` と一致しないため、正規化で落とさず拒否する。
-  if (hostname.endsWith(".")) return null;
+  if (hostname.endsWith('.')) return null;
   // IPv6 リテラルは `[::1]` の形なので、空ラベルの判定は IPv4・ホスト名にだけ行う。
-  if (!hostname.startsWith("[") && hostname.split(".").some((label) => label === "")) {
+  if (
+    !hostname.startsWith('[') &&
+    hostname.split('.').some((label) => label === '')
+  ) {
     return null;
   }
   if (!isAllowedActionOriginPattern(url.host)) return null;
 
-  if (url.protocol === "https:") return { origin: url.origin, host: url.host };
-  if (url.protocol === "http:" && hostname === "localhost") {
+  if (url.protocol === 'https:') return { origin: url.origin, host: url.host };
+  if (url.protocol === 'http:' && hostname === 'localhost') {
     return { origin: url.origin, host: url.host };
   }
   return null;
@@ -343,7 +352,7 @@ const portValue = requiredString()
   );
 
 const publicOriginMessage =
-  "HTTPS の URL、または開発時のみ http://localhost[:port] を、パスを含めずに指定してください";
+  'HTTPS の URL、または開発時のみ http://localhost[:port] を、パスを含めずに指定してください';
 
 /**
  * 検証と正規化を 1 回の評価で行う。`refine` で判定して `transform` で再度解析すると、
@@ -352,7 +361,7 @@ const publicOriginMessage =
 const publicOriginValue = requiredString().transform((value, ctx) => {
   const parsed = parsePublicOrigin(value);
   if (parsed === null) {
-    ctx.addIssue({ code: "custom", message: publicOriginMessage });
+    ctx.addIssue({ code: 'custom', message: publicOriginMessage });
     return z.NEVER;
   }
   return parsed;
@@ -370,7 +379,7 @@ const usernameValue = requiredString().regex(/^[A-Za-z0-9._-]{1,64}$/, {
 
 const passwordHashValue = requiredString().refine(isValidArgon2idHash, {
   message:
-    "Argon2id のハッシュ（$argon2id$v=..$m=..,t=..,p=..$salt$hash、m=19456-262144, t=2-10, p=1-4）を指定してください",
+    'Argon2id のハッシュ（$argon2id$v=..$m=..,t=..,p=..$salt$hash、m=19456-262144, t=2-10, p=1-4）を指定してください',
 });
 
 /**
@@ -393,10 +402,10 @@ const environmentShape = {
   POWER_MANAGER_SSH_IDENTITY_FILE: absolutePath(),
   POWER_MANAGER_SSH_KNOWN_HOSTS_FILE: absolutePath(),
   NODE_ENV: z
-    .enum(["production", "development", "test"], {
-      error: "production（開発時は development）を指定してください",
+    .enum(['production', 'development', 'test'], {
+      error: 'production（開発時は development）を指定してください',
     })
-    .default("production"),
+    .default('production'),
 };
 
 const environmentSchema = z
@@ -414,15 +423,16 @@ const environmentSchema = z
     // 素の例外として `startRuntime` を素通りしてしまう。変換結果だけを受け取る。
     const publicOrigin = data.POWER_MANAGER_PUBLIC_ORIGIN;
     if (
-      typeof publicOrigin === "object" &&
+      typeof publicOrigin === 'object' &&
       publicOrigin !== null &&
-      data.NODE_ENV === "production" &&
-      publicOrigin.origin.startsWith("http:")
+      data.NODE_ENV === 'production' &&
+      publicOrigin.origin.startsWith('http:')
     ) {
       ctx.addIssue({
-        code: "custom",
-        path: ["POWER_MANAGER_PUBLIC_ORIGIN"],
-        message: "本番（NODE_ENV=production）では HTTPS の URL を指定してください",
+        code: 'custom',
+        path: ['POWER_MANAGER_PUBLIC_ORIGIN'],
+        message:
+          '本番（NODE_ENV=production）では HTTPS の URL を指定してください',
       });
     }
   });
@@ -436,14 +446,14 @@ function describeIssues(error: z.ZodError): string {
   const seen = new Set<string>();
 
   for (const issue of error.issues) {
-    const name = issue.path.map(String).join(".") || "(環境変数)";
+    const name = issue.path.map(String).join('.') || '(環境変数)';
     const part = `${name}: ${issue.message}`;
     if (seen.has(part)) continue;
     seen.add(part);
     parts.push(part);
   }
 
-  return `環境変数が不正です（${parts.join(" / ")}）`;
+  return `環境変数が不正です（${parts.join(' / ')}）`;
 }
 
 /** スキーマが求める変数だけを環境から抜き出す。 */
@@ -461,7 +471,8 @@ export function loadRuntimeConfig(
   env: Record<string, string | undefined> = process.env,
 ): RuntimeConfig {
   const parsed = environmentSchema.safeParse(pickEnvironment(env));
-  if (!parsed.success) throw new ConfigurationError(describeIssues(parsed.error));
+  if (!parsed.success)
+    throw new ConfigurationError(describeIssues(parsed.error));
 
   return {
     configPath: parsed.data.POWER_MANAGER_CONFIG_PATH,

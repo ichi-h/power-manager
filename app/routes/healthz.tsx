@@ -5,8 +5,8 @@
  * JSON・バージョン・稼働時間・設定状態を含めない（`docs/architecture.md` 4 章）。
  */
 export function loader() {
-  return new Response("ok", {
+  return new Response('ok', {
     status: 200,
-    headers: { "content-type": "text/plain; charset=utf-8" },
+    headers: { 'content-type': 'text/plain; charset=utf-8' },
   });
 }

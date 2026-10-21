@@ -48,7 +48,11 @@
       "enabled": true,
       "target": { "type": "server", "id": "nas" },
       "operation": "wake",
-      "repeat": { "kind": "weekly", "days": ["mon", "tue", "wed", "thu", "fri"], "time": "07:30" }
+      "repeat": {
+        "kind": "weekly",
+        "days": ["mon", "tue", "wed", "thu", "fri"],
+        "time": "07:30"
+      }
     }
   ]
 }

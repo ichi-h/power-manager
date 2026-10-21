@@ -1,49 +1,57 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from 'vitest';
 
-import { ConfigurationError, loadRuntimeConfig } from "../app/lib/config.server.ts";
+import {
+  ConfigurationError,
+  loadRuntimeConfig,
+} from '../app/lib/config.server.ts';
 
-import { validEnvironment } from "./support/environment.ts";
+import { validEnvironment } from './support/environment.ts';
 
-describe("実行時設定", () => {
-  test("必須の環境変数が揃っていれば検証済みの設定を返す", () => {
+describe('実行時設定', () => {
+  test('必須の環境変数が揃っていれば検証済みの設定を返す', () => {
     const runtime = loadRuntimeConfig(validEnvironment());
 
     expect(runtime.port).toBe(8080);
-    expect(runtime.configPath).toBe("/etc/power-manager/config.json");
-    expect(runtime.publicOrigin).toBe("https://power.example.ts.net");
-    expect(runtime.authUsername).toBe("admin");
+    expect(runtime.configPath).toBe('/etc/power-manager/config.json');
+    expect(runtime.publicOrigin).toBe('https://power.example.ts.net');
+    expect(runtime.authUsername).toBe('admin');
     // ハッシュは検証にだけ使い、返すときも加工しない（トリムや再エンコードをしない）。
-    expect(runtime.authPasswordHash).toBe(validEnvironment().POWER_MANAGER_AUTH_PASSWORD_HASH);
-    expect(runtime.sshIdentityFile).toBe("/run/secrets/power-manager/id_ed25519");
-    expect(runtime.sshKnownHostsFile).toBe("/etc/power-manager/known_hosts");
+    expect(runtime.authPasswordHash).toBe(
+      validEnvironment().POWER_MANAGER_AUTH_PASSWORD_HASH,
+    );
+    expect(runtime.sshIdentityFile).toBe(
+      '/run/secrets/power-manager/id_ed25519',
+    );
+    expect(runtime.sshKnownHostsFile).toBe('/etc/power-manager/known_hosts');
     // NODE_ENV は本番既定値を持つ。環境変数ファイルでの上書きは任意。
-    expect(runtime.nodeEnv).toBe("production");
+    expect(runtime.nodeEnv).toBe('production');
   });
 
-  test("検証失敗は ConfigurationError になる", () => {
+  test('検証失敗は ConfigurationError になる', () => {
     expect(() => loadRuntimeConfig({})).toThrow(ConfigurationError);
   });
 
-  test.each(["POWER_MANAGER_PUBLIC_ORIGIN", "POWER_MANAGER_AUTH_USERNAME", "NODE_ENV"])(
-    "%s だけが不正でも ConfigurationError になる",
-    (name) => {
-      // クロスフィールド検証（superRefine）が、他のフィールドの失敗で `undefined` に
-      // なった値を読むと TypeError に変わる。起動時の分類が崩れないことを固定する。
-      expect(() => loadRuntimeConfig({ ...validEnvironment(), [name]: "" })).toThrow(
-        ConfigurationError,
-      );
-    },
-  );
+  test.each([
+    'POWER_MANAGER_PUBLIC_ORIGIN',
+    'POWER_MANAGER_AUTH_USERNAME',
+    'NODE_ENV',
+  ])('%s だけが不正でも ConfigurationError になる', (name) => {
+    // クロスフィールド検証（superRefine）が、他のフィールドの失敗で `undefined` に
+    // なった値を読むと TypeError に変わる。起動時の分類が崩れないことを固定する。
+    expect(() =>
+      loadRuntimeConfig({ ...validEnvironment(), [name]: '' }),
+    ).toThrow(ConfigurationError);
+  });
 
   test.each([
-    "POWER_MANAGER_CONFIG_PATH",
-    "POWER_MANAGER_PORT",
-    "POWER_MANAGER_PUBLIC_ORIGIN",
-    "POWER_MANAGER_AUTH_USERNAME",
-    "POWER_MANAGER_AUTH_PASSWORD_HASH",
-    "POWER_MANAGER_SSH_IDENTITY_FILE",
-    "POWER_MANAGER_SSH_KNOWN_HOSTS_FILE",
-  ])("必須の %s が欠落していれば変数名付きで拒否する", (name) => {
+    'POWER_MANAGER_CONFIG_PATH',
+    'POWER_MANAGER_PORT',
+    'POWER_MANAGER_PUBLIC_ORIGIN',
+    'POWER_MANAGER_AUTH_USERNAME',
+    'POWER_MANAGER_AUTH_PASSWORD_HASH',
+    'POWER_MANAGER_SSH_IDENTITY_FILE',
+    'POWER_MANAGER_SSH_KNOWN_HOSTS_FILE',
+  ])('必須の %s が欠落していれば変数名付きで拒否する', (name) => {
     const environment = validEnvironment();
     delete environment[name];
 
@@ -55,266 +63,321 @@ describe("実行時設定", () => {
   });
 
   test.each([
-    "POWER_MANAGER_CONFIG_PATH",
-    "POWER_MANAGER_AUTH_USERNAME",
-    "POWER_MANAGER_SSH_IDENTITY_FILE",
-    "POWER_MANAGER_SSH_KNOWN_HOSTS_FILE",
-  ])("空文字の %s を拒否する", (name) => {
-    expect(() => loadRuntimeConfig({ ...validEnvironment(), [name]: "" })).toThrow(
-      new RegExp(`${name}: 空です`),
-    );
+    'POWER_MANAGER_CONFIG_PATH',
+    'POWER_MANAGER_AUTH_USERNAME',
+    'POWER_MANAGER_SSH_IDENTITY_FILE',
+    'POWER_MANAGER_SSH_KNOWN_HOSTS_FILE',
+  ])('空文字の %s を拒否する', (name) => {
+    expect(() =>
+      loadRuntimeConfig({ ...validEnvironment(), [name]: '' }),
+    ).toThrow(new RegExp(`${name}: 空です`));
   });
 
-  test("メッセージに値そのものを含めない", () => {
-    const secret = "very-secret-value";
+  test('メッセージに値そのものを含めない', () => {
+    const secret = 'very-secret-value';
     expect(() =>
-      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_AUTH_PASSWORD_HASH: secret }),
-    ).toThrow(expect.objectContaining({ message: expect.not.stringContaining(secret) }));
+      loadRuntimeConfig({
+        ...validEnvironment(),
+        POWER_MANAGER_AUTH_PASSWORD_HASH: secret,
+      }),
+    ).toThrow(
+      expect.objectContaining({ message: expect.not.stringContaining(secret) }),
+    );
   });
 });
 
-describe("ポート", () => {
+describe('ポート', () => {
   test.each([
-    "0",
-    "65536",
-    "abc",
-    "8080.5",
-    "-1",
-    " 8080",
-    "8080\n",
-    "+8080",
-    "1e3",
+    '0',
+    '65536',
+    'abc',
+    '8080.5',
+    '-1',
+    ' 8080',
+    '8080\n',
+    '+8080',
+    '1e3',
     // 先頭ゼロは 8 進数風の指定として黙って解釈しない。
-    "08080",
-    "00",
-    "000",
+    '08080',
+    '00',
+    '000',
     // 桁あふれは英語の内部メッセージを混ぜずに拒否する。
-    "100000000000000000000",
+    '100000000000000000000',
     // 全角数字は数値として解釈しない。
-    "８０８０",
-  ])("範囲外・不正なポート %s を拒否する", (value) => {
+    '８０８０',
+  ])('範囲外・不正なポート %s を拒否する', (value) => {
     expect(() =>
       loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_PORT: value }),
     ).toThrow(/POWER_MANAGER_PORT/);
   });
 
-  test("巨大な数値でも英語の内部メッセージを混ぜない", () => {
+  test('巨大な数値でも英語の内部メッセージを混ぜない', () => {
     expect(() =>
       loadRuntimeConfig({
         ...validEnvironment(),
-        POWER_MANAGER_PORT: "100000000000000000000",
+        POWER_MANAGER_PORT: '100000000000000000000',
       }),
-    ).toThrow(expect.objectContaining({ message: expect.not.stringContaining("Too big") }));
+    ).toThrow(
+      expect.objectContaining({
+        message: expect.not.stringContaining('Too big'),
+      }),
+    );
   });
 
   test.each([
-    ["1", 1],
-    ["65535", 65535],
-    ["8080", 8080],
-  ])("有効なポート %s を数値として読む", (value, expected) => {
-    expect(loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_PORT: value }).port).toBe(
-      expected,
-    );
+    ['1', 1],
+    ['65535', 65535],
+    ['8080', 8080],
+  ])('有効なポート %s を数値として読む', (value, expected) => {
+    expect(
+      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_PORT: value })
+        .port,
+    ).toBe(expected);
   });
 });
 
-describe("公開 Origin", () => {
+describe('公開 Origin', () => {
   test.each([
-    ["https://power.example.ts.net", "https://power.example.ts.net"],
-    ["https://power.example.ts.net:8443", "https://power.example.ts.net:8443"],
-    ["https://power.example.ts.net/", "https://power.example.ts.net"],
-  ])("本番の HTTPS Origin %s を %s として受け付ける", (value, expected) => {
-    expect(
-      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_PUBLIC_ORIGIN: value }).publicOrigin,
-    ).toBe(expected);
-  });
-
-  test.each([
-    ["http://localhost", "http://localhost"],
-    ["http://localhost:5173", "http://localhost:5173"],
-  ])("開発時の HTTP Origin %s を %s として受け付ける", (value, expected) => {
+    ['https://power.example.ts.net', 'https://power.example.ts.net'],
+    ['https://power.example.ts.net:8443', 'https://power.example.ts.net:8443'],
+    ['https://power.example.ts.net/', 'https://power.example.ts.net'],
+  ])('本番の HTTPS Origin %s を %s として受け付ける', (value, expected) => {
     expect(
       loadRuntimeConfig({
         ...validEnvironment(),
-        NODE_ENV: "development",
         POWER_MANAGER_PUBLIC_ORIGIN: value,
       }).publicOrigin,
     ).toBe(expected);
   });
 
-  test("本番では http://localhost の Origin を拒否する", () => {
+  test.each([
+    ['http://localhost', 'http://localhost'],
+    ['http://localhost:5173', 'http://localhost:5173'],
+  ])('開発時の HTTP Origin %s を %s として受け付ける', (value, expected) => {
+    expect(
+      loadRuntimeConfig({
+        ...validEnvironment(),
+        NODE_ENV: 'development',
+        POWER_MANAGER_PUBLIC_ORIGIN: value,
+      }).publicOrigin,
+    ).toBe(expected);
+  });
+
+  test('本番では http://localhost の Origin を拒否する', () => {
     expect(() =>
       loadRuntimeConfig({
         ...validEnvironment(),
-        NODE_ENV: "production",
-        POWER_MANAGER_PUBLIC_ORIGIN: "http://localhost:5173",
+        NODE_ENV: 'production',
+        POWER_MANAGER_PUBLIC_ORIGIN: 'http://localhost:5173',
       }),
     ).toThrow(/POWER_MANAGER_PUBLIC_ORIGIN/);
   });
 
-  test("NODE_ENV 未設定（既定の production）でも HTTP Origin を拒否する", () => {
+  test('NODE_ENV 未設定（既定の production）でも HTTP Origin を拒否する', () => {
     expect(() =>
-      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_PUBLIC_ORIGIN: "http://localhost" }),
+      loadRuntimeConfig({
+        ...validEnvironment(),
+        POWER_MANAGER_PUBLIC_ORIGIN: 'http://localhost',
+      }),
     ).toThrow(/POWER_MANAGER_PUBLIC_ORIGIN/);
   });
 
   test.each([
     // URL の正規化に委ねることを意図したケース。ここを変えると Origin の完全一致が
     // 崩れるため、期待値を固定しておく。
-    ["HTTPS://power.example.ts.net", "https://power.example.ts.net"],
+    ['HTTPS://power.example.ts.net', 'https://power.example.ts.net'],
     // 国際化ドメインは punycode に正規化される（ブラウザが送る Origin と同じ形）。
-    ["https://電源.example.ts.net", "https://xn--b9w357f.example.ts.net"],
-  ])("URL の正規化に従って %s を %s として受け付ける", (value, expected) => {
+    ['https://電源.example.ts.net', 'https://xn--b9w357f.example.ts.net'],
+  ])('URL の正規化に従って %s を %s として受け付ける', (value, expected) => {
     expect(
-      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_PUBLIC_ORIGIN: value }).publicOrigin,
+      loadRuntimeConfig({
+        ...validEnvironment(),
+        POWER_MANAGER_PUBLIC_ORIGIN: value,
+      }).publicOrigin,
     ).toBe(expected);
   });
 
-  test.each(["", "https://power.example.ts.net ", "   "])(
+  test.each(['', 'https://power.example.ts.net ', '   '])(
     // 個別の検証に落ちた値をクロスフィールド検証が参照すると TypeError になる。
     // ConfigurationError 以外は `startRuntime` が再送出するため、ここで固定する。
-    "PUBLIC_ORIGIN が %j のときも ConfigurationError になる",
+    'PUBLIC_ORIGIN が %j のときも ConfigurationError になる',
     (value) => {
       expect(() =>
-        loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_PUBLIC_ORIGIN: value }),
+        loadRuntimeConfig({
+          ...validEnvironment(),
+          POWER_MANAGER_PUBLIC_ORIGIN: value,
+        }),
       ).toThrow(ConfigurationError);
     },
   );
 
-  test("末尾の空白は URL が落とす前に拒否する", () => {
+  test('末尾の空白は URL が落とす前に拒否する', () => {
     expect(() =>
       loadRuntimeConfig({
         ...validEnvironment(),
-        POWER_MANAGER_PUBLIC_ORIGIN: "https://power.example.ts.net ",
+        POWER_MANAGER_PUBLIC_ORIGIN: 'https://power.example.ts.net ',
       }),
     ).toThrow(/POWER_MANAGER_PUBLIC_ORIGIN: 前後に空白を含めないでください/);
   });
 
-  test("スキームを含まない host を併せて導出する", () => {
+  test('スキームを含まない host を併せて導出する', () => {
     const runtime = loadRuntimeConfig({
       ...validEnvironment(),
-      POWER_MANAGER_PUBLIC_ORIGIN: "https://power.example.ts.net:8443",
+      POWER_MANAGER_PUBLIC_ORIGIN: 'https://power.example.ts.net:8443',
     });
 
-    expect(runtime.publicOrigin).toBe("https://power.example.ts.net:8443");
+    expect(runtime.publicOrigin).toBe('https://power.example.ts.net:8443');
     // allowedActionOrigins の照合形式に合わせる。スキームを含めると一致しない。
-    expect(runtime.publicOriginHost).toBe("power.example.ts.net:8443");
+    expect(runtime.publicOriginHost).toBe('power.example.ts.net:8443');
   });
 
   test.each([
     // ワイルドカードは allowedActionOrigins で任意ホストに一致してしまう。
-    "https://*.example.com",
-    "https://*.ts.net",
-    "https://*",
-    "https://**",
+    'https://*.example.com',
+    'https://*.ts.net',
+    'https://*',
+    'https://**',
     // 予約語ホストは `Origin: null` と完全一致する。
-    "https://null",
-    "https://undefined",
-    "https://true",
-    "https://false",
+    'https://null',
+    'https://undefined',
+    'https://true',
+    'https://false',
     // 空ラベル・末尾ドット・ポート 0 は Origin として無効。
-    "https://a..b",
-    "https://.example.com",
-    "https://a.ts.net.",
-    "https://power.example.ts.net:0",
-  ])("Origin として不正な %s を拒否する", (value) => {
+    'https://a..b',
+    'https://.example.com',
+    'https://a.ts.net.',
+    'https://power.example.ts.net:0',
+  ])('Origin として不正な %s を拒否する', (value) => {
     expect(() =>
-      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_PUBLIC_ORIGIN: value }),
+      loadRuntimeConfig({
+        ...validEnvironment(),
+        POWER_MANAGER_PUBLIC_ORIGIN: value,
+      }),
     ).toThrow(/POWER_MANAGER_PUBLIC_ORIGIN/);
   });
 
   test.each([
-    "http://power.example.ts.net",
-    "http://127.0.0.1:5173",
-    "http://[::1]:5173",
+    'http://power.example.ts.net',
+    'http://127.0.0.1:5173',
+    'http://[::1]:5173',
     // パス・クエリ・フラグメント・資格情報は Origin ではない。
-    "https://power.example.ts.net/some/path",
-    "https://power.example.ts.net/?query=1",
-    "https://power.example.ts.net/#fragment",
-    "https://user:pass@power.example.ts.net",
-    "ftp://power.example.ts.net",
-    "power.example.ts.net",
-    "not a url",
-  ])("HTTP の許可条件を満たさない %s を拒否する", (value) => {
+    'https://power.example.ts.net/some/path',
+    'https://power.example.ts.net/?query=1',
+    'https://power.example.ts.net/#fragment',
+    'https://user:pass@power.example.ts.net',
+    'ftp://power.example.ts.net',
+    'power.example.ts.net',
+    'not a url',
+  ])('HTTP の許可条件を満たさない %s を拒否する', (value) => {
     expect(() =>
-      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_PUBLIC_ORIGIN: value }),
+      loadRuntimeConfig({
+        ...validEnvironment(),
+        POWER_MANAGER_PUBLIC_ORIGIN: value,
+      }),
     ).toThrow(/POWER_MANAGER_PUBLIC_ORIGIN/);
   });
 });
 
-describe("パスワードハッシュ", () => {
-  test("Argon2id 以外のハッシュを拒否する", () => {
+describe('パスワードハッシュ', () => {
+  test('Argon2id 以外のハッシュを拒否する', () => {
     expect(() =>
       loadRuntimeConfig({
         ...validEnvironment(),
-        POWER_MANAGER_AUTH_PASSWORD_HASH: "$argon2i$v=19$m=65536,t=2,p=1$c2FsdA$aGFzaA",
+        POWER_MANAGER_AUTH_PASSWORD_HASH:
+          '$argon2i$v=19$m=65536,t=2,p=1$c2FsdA$aGFzaA',
       }),
     ).toThrow(/POWER_MANAGER_AUTH_PASSWORD_HASH/);
   });
 
   test.each([
-    "plain-password",
-    "$argon2id$",
-    "$argon2id$v=19$m=65536,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg",
-    "$argon2id$v=19$m=65536,t=2$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM",
-    "$argon2id$m=65536,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM",
-  ])("構造不正の %s を拒否する", (value) => {
+    'plain-password',
+    '$argon2id$',
+    '$argon2id$v=19$m=65536,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg',
+    '$argon2id$v=19$m=65536,t=2$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM',
+    '$argon2id$m=65536,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM',
+  ])('構造不正の %s を拒否する', (value) => {
     expect(() =>
-      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_AUTH_PASSWORD_HASH: value }),
+      loadRuntimeConfig({
+        ...validEnvironment(),
+        POWER_MANAGER_AUTH_PASSWORD_HASH: value,
+      }),
     ).toThrow(/POWER_MANAGER_AUTH_PASSWORD_HASH/);
   });
 
-  test("argon2.hash() の出力（m,p,t 順）を受け付ける", async () => {
-    const argon2 = await import("argon2");
-    const hash = await argon2.hash("password", { type: argon2.argon2id });
+  test('argon2.hash() の出力（m,p,t 順）を受け付ける', async () => {
+    const argon2 = await import('argon2');
+    const hash = await argon2.hash('password', { type: argon2.argon2id });
 
     // node-argon2 は `m,p,t` の順で出す。パラメータ順に依存しないことを固定する。
-    expect(hash.startsWith("$argon2id$v=19$m=")).toBe(true);
+    expect(hash.startsWith('$argon2id$v=19$m=')).toBe(true);
     expect(
-      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_AUTH_PASSWORD_HASH: hash })
-        .authPasswordHash,
+      loadRuntimeConfig({
+        ...validEnvironment(),
+        POWER_MANAGER_AUTH_PASSWORD_HASH: hash,
+      }).authPasswordHash,
     ).toBe(hash);
   });
 
   test.each([
     // 弱いパラメータは事実上総当たり可能になる。
-    ["$argon2id$v=19$m=8,t=1,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM"],
-    ["$argon2id$v=19$m=19455,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM"],
-    ["$argon2id$v=19$m=65536,t=1,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM"],
-    ["$argon2id$v=19$m=65536,t=2,p=5$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM"],
+    [
+      '$argon2id$v=19$m=8,t=1,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM',
+    ],
+    [
+      '$argon2id$v=19$m=19455,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM',
+    ],
+    [
+      '$argon2id$v=19$m=65536,t=1,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM',
+    ],
+    [
+      '$argon2id$v=19$m=65536,t=2,p=5$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM',
+    ],
     // 過大なパラメータは未認証リクエストごとの検証でメモリを枯渇させる。
-    ["$argon2id$v=19$m=1048576,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM"],
-    ["$argon2id$v=19$m=262145,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM"],
-    ["$argon2id$v=19$m=65536,t=11,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM"],
+    [
+      '$argon2id$v=19$m=1048576,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM',
+    ],
+    [
+      '$argon2id$v=19$m=262145,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM',
+    ],
+    [
+      '$argon2id$v=19$m=65536,t=11,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM',
+    ],
     // 短いソルト・短いハッシュは argon2.verify が例外を投げる。
-    ["$argon2id$v=19$m=65536,t=2,p=1$c2FsdA$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM"],
-    ["$argon2id$v=19$m=65536,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg$aGFzaA"],
-  ])("パラメータ範囲外の %s を拒否する", (value) => {
+    [
+      '$argon2id$v=19$m=65536,t=2,p=1$c2FsdA$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM',
+    ],
+    ['$argon2id$v=19$m=65536,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg$aGFzaA'],
+  ])('パラメータ範囲外の %s を拒否する', (value) => {
     expect(() =>
-      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_AUTH_PASSWORD_HASH: value }),
+      loadRuntimeConfig({
+        ...validEnvironment(),
+        POWER_MANAGER_AUTH_PASSWORD_HASH: value,
+      }),
     ).toThrow(/POWER_MANAGER_AUTH_PASSWORD_HASH/);
   });
 
   test.each([
-    "POWER_MANAGER_AUTH_PASSWORD_HASH",
-    "POWER_MANAGER_SSH_IDENTITY_FILE",
-    "POWER_MANAGER_CONFIG_PATH",
-  ])("メッセージに %s の値を含めない", (name) => {
-    const secret = "very-secret-value";
-    expect(() => loadRuntimeConfig({ ...validEnvironment(), [name]: secret })).toThrow(
+    'POWER_MANAGER_AUTH_PASSWORD_HASH',
+    'POWER_MANAGER_SSH_IDENTITY_FILE',
+    'POWER_MANAGER_CONFIG_PATH',
+  ])('メッセージに %s の値を含めない', (name) => {
+    const secret = 'very-secret-value';
+    expect(() =>
+      loadRuntimeConfig({ ...validEnvironment(), [name]: secret }),
+    ).toThrow(
       expect.objectContaining({ message: expect.not.stringContaining(secret) }),
     );
   });
 });
 
-describe("検証メッセージの組み立て", () => {
-  test("複数の不正を 1 行にまとめ、変数名をすべて挙げる", () => {
+describe('検証メッセージの組み立て', () => {
+  test('複数の不正を 1 行にまとめ、変数名をすべて挙げる', () => {
     const error = (() => {
       try {
         loadRuntimeConfig({
           ...validEnvironment(),
-          POWER_MANAGER_PORT: "abc",
-          POWER_MANAGER_AUTH_USERNAME: "a:b",
+          POWER_MANAGER_PORT: 'abc',
+          POWER_MANAGER_AUTH_USERNAME: 'a:b',
         });
         return null;
       } catch (caught) {
@@ -323,22 +386,25 @@ describe("検証メッセージの組み立て", () => {
     })();
 
     expect(error?.message).toMatch(/^環境変数が不正です（/);
-    expect(error?.message).toContain("POWER_MANAGER_PORT");
-    expect(error?.message).toContain("POWER_MANAGER_AUTH_USERNAME");
+    expect(error?.message).toContain('POWER_MANAGER_PORT');
+    expect(error?.message).toContain('POWER_MANAGER_AUTH_USERNAME');
     // 標準エラーへ 1 行で出すため、改行を含めない。
-    expect(error?.message).not.toContain("\n");
+    expect(error?.message).not.toContain('\n');
   });
 
-  test("同じ変数・同じ理由の指摘は重複させない", () => {
+  test('同じ変数・同じ理由の指摘は重複させない', () => {
     const messages = (() => {
       try {
-        loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_PORT: "0" });
+        loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_PORT: '0' });
         return [];
       } catch (caught) {
         const message = (caught as Error).message;
         // 「環境変数が不正です（... / ...）」の括弧の中を分解する。
-        const inner = message.slice(message.indexOf("（") + 1, message.lastIndexOf("）"));
-        return inner.split(" / ");
+        const inner = message.slice(
+          message.indexOf('（') + 1,
+          message.lastIndexOf('）'),
+        );
+        return inner.split(' / ');
       }
     })();
 
@@ -346,159 +412,187 @@ describe("検証メッセージの組み立て", () => {
   });
 });
 
-describe("絶対パス", () => {
+describe('絶対パス', () => {
   test.each([
-    "POWER_MANAGER_CONFIG_PATH",
-    "POWER_MANAGER_SSH_IDENTITY_FILE",
-    "POWER_MANAGER_SSH_KNOWN_HOSTS_FILE",
-  ])("相対パスの %s を拒否する", (name) => {
-    expect(() => loadRuntimeConfig({ ...validEnvironment(), [name]: "relative/path" })).toThrow(
-      new RegExp(`${name}: 絶対パスを正規化した形で指定してください`),
-    );
-  });
-
-  test.each([
-    "/etc/power-manager/../power-manager/config.json",
-    "/etc//power-manager/config.json",
-    "/etc/power-manager/",
-    "/etc/power-manager/config.json ",
-    "/etc/power-manager/\0config.json",
-  ])("正規化されていないパス %j を拒否する", (value) => {
+    'POWER_MANAGER_CONFIG_PATH',
+    'POWER_MANAGER_SSH_IDENTITY_FILE',
+    'POWER_MANAGER_SSH_KNOWN_HOSTS_FILE',
+  ])('相対パスの %s を拒否する', (name) => {
     expect(() =>
-      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_CONFIG_PATH: value }),
-    ).toThrow(/POWER_MANAGER_CONFIG_PATH/);
+      loadRuntimeConfig({ ...validEnvironment(), [name]: 'relative/path' }),
+    ).toThrow(new RegExp(`${name}: 絶対パスを正規化した形で指定してください`));
   });
 
-  test("NUL バイトを含むパスの拒否メッセージに値を含めない", () => {
+  test.each([
+    '/etc/power-manager/../power-manager/config.json',
+    '/etc//power-manager/config.json',
+    '/etc/power-manager/',
+    '/etc/power-manager/config.json ',
+    '/etc/power-manager/\0config.json',
+  ])('正規化されていないパス %j を拒否する', (value) => {
     expect(() =>
       loadRuntimeConfig({
         ...validEnvironment(),
-        POWER_MANAGER_CONFIG_PATH: "/etc/\0secret.json",
+        POWER_MANAGER_CONFIG_PATH: value,
       }),
-    ).toThrow(expect.objectContaining({ message: expect.not.stringContaining("secret") }));
+    ).toThrow(/POWER_MANAGER_CONFIG_PATH/);
+  });
+
+  test('NUL バイトを含むパスの拒否メッセージに値を含めない', () => {
+    expect(() =>
+      loadRuntimeConfig({
+        ...validEnvironment(),
+        POWER_MANAGER_CONFIG_PATH: '/etc/\0secret.json',
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        message: expect.not.stringContaining('secret'),
+      }),
+    );
   });
 });
 
-describe("ユーザー名", () => {
+describe('ユーザー名', () => {
   test.each([
-    "admin:password",
-    "admin user",
-    "admin\tuser",
-    "管理者",
-    "a".repeat(65),
-  ])("Basic 認証で扱えない %j を拒否する", (value) => {
+    'admin:password',
+    'admin user',
+    'admin\tuser',
+    '管理者',
+    'a'.repeat(65),
+  ])('Basic 認証で扱えない %j を拒否する', (value) => {
     expect(() =>
-      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_AUTH_USERNAME: value }),
+      loadRuntimeConfig({
+        ...validEnvironment(),
+        POWER_MANAGER_AUTH_USERNAME: value,
+      }),
     ).toThrow(/POWER_MANAGER_AUTH_USERNAME/);
   });
 
-  test.each(["a", "admin", "admin.user-name_1", "a".repeat(64)])(
-    "有効なユーザー名 %j を受け付ける",
+  test.each(['a', 'admin', 'admin.user-name_1', 'a'.repeat(64)])(
+    '有効なユーザー名 %j を受け付ける',
     (value) => {
       expect(
-        loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_AUTH_USERNAME: value })
-          .authUsername,
+        loadRuntimeConfig({
+          ...validEnvironment(),
+          POWER_MANAGER_AUTH_USERNAME: value,
+        }).authUsername,
       ).toBe(value);
     },
   );
 });
 
-describe("空白", () => {
-  test.each(["  ", " admin", "admin "])("前後空白を含むユーザー名 %j を拒否する", (value) => {
-    expect(() =>
-      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_AUTH_USERNAME: value }),
-    ).toThrow(/POWER_MANAGER_AUTH_USERNAME/);
-  });
+describe('空白', () => {
+  test.each(['  ', ' admin', 'admin '])(
+    '前後空白を含むユーザー名 %j を拒否する',
+    (value) => {
+      expect(() =>
+        loadRuntimeConfig({
+          ...validEnvironment(),
+          POWER_MANAGER_AUTH_USERNAME: value,
+        }),
+      ).toThrow(/POWER_MANAGER_AUTH_USERNAME/);
+    },
+  );
 });
 
-describe("NODE_ENV", () => {
-  test.each(["production", "development", "test"])(
-    "許可値 %s を受け付ける",
+describe('NODE_ENV', () => {
+  test.each(['production', 'development', 'test'])(
+    '許可値 %s を受け付ける',
     (value) => {
       expect(
         loadRuntimeConfig({
           ...validEnvironment(),
           NODE_ENV: value,
           POWER_MANAGER_PUBLIC_ORIGIN:
-            value === "production" ? "https://power.example.ts.net" : "http://localhost:5173",
+            value === 'production'
+              ? 'https://power.example.ts.net'
+              : 'http://localhost:5173',
         }).nodeEnv,
       ).toBe(value);
     },
   );
 
-  test.each(["staging", "Production", "prod", "", " development"])(
-    "許可値以外の %j を拒否する",
+  test.each(['staging', 'Production', 'prod', '', ' development'])(
+    '許可値以外の %j を拒否する',
     (value) => {
-      expect(() => loadRuntimeConfig({ ...validEnvironment(), NODE_ENV: value })).toThrow(
-        /NODE_ENV/,
-      );
+      expect(() =>
+        loadRuntimeConfig({ ...validEnvironment(), NODE_ENV: value }),
+      ).toThrow(/NODE_ENV/);
     },
   );
 
-  test("NODE_ENV を省略すると production として扱う", () => {
+  test('NODE_ENV を省略すると production として扱う', () => {
     const environment = validEnvironment();
     delete environment.NODE_ENV;
 
-    expect(loadRuntimeConfig(environment).nodeEnv).toBe("production");
+    expect(loadRuntimeConfig(environment).nodeEnv).toBe('production');
   });
 
-  test("NODE_ENV=production では HTTP の Origin を拒否し、それ以外では受容する", () => {
+  test('NODE_ENV=production では HTTP の Origin を拒否し、それ以外では受容する', () => {
     expect(() =>
       loadRuntimeConfig({
         ...validEnvironment(),
-        NODE_ENV: "production",
-        POWER_MANAGER_PUBLIC_ORIGIN: "http://localhost:5173",
+        NODE_ENV: 'production',
+        POWER_MANAGER_PUBLIC_ORIGIN: 'http://localhost:5173',
       }),
     ).toThrow(/POWER_MANAGER_PUBLIC_ORIGIN/);
 
     expect(
       loadRuntimeConfig({
         ...validEnvironment(),
-        NODE_ENV: "development",
-        POWER_MANAGER_PUBLIC_ORIGIN: "http://localhost:5173",
+        NODE_ENV: 'development',
+        POWER_MANAGER_PUBLIC_ORIGIN: 'http://localhost:5173',
       }).publicOrigin,
-    ).toBe("http://localhost:5173");
+    ).toBe('http://localhost:5173');
   });
 });
 
-describe("秘密値", () => {
+describe('秘密値', () => {
   test.each([
-    "POWER_MANAGER_AUTH_PASSWORD_HASH",
-    "POWER_MANAGER_SSH_IDENTITY_FILE",
-    "POWER_MANAGER_SSH_KNOWN_HOSTS_FILE",
-    "POWER_MANAGER_CONFIG_PATH",
-  ])("%s の値を検証エラーメッセージに含めない", (name) => {
+    'POWER_MANAGER_AUTH_PASSWORD_HASH',
+    'POWER_MANAGER_SSH_IDENTITY_FILE',
+    'POWER_MANAGER_SSH_KNOWN_HOSTS_FILE',
+    'POWER_MANAGER_CONFIG_PATH',
+  ])('%s の値を検証エラーメッセージに含めない', (name) => {
     // 変数名は伝えるが、指定された値（秘密やローカルのパス）は伝えない。
-    expect(() => loadRuntimeConfig({ ...validEnvironment(), [name]: "leaked-value" })).toThrow(
+    expect(() =>
+      loadRuntimeConfig({ ...validEnvironment(), [name]: 'leaked-value' }),
+    ).toThrow(
       expect.objectContaining({
         message: expect.stringContaining(name),
       }),
     );
-    expect(() => loadRuntimeConfig({ ...validEnvironment(), [name]: "leaked-value" })).toThrow(
+    expect(() =>
+      loadRuntimeConfig({ ...validEnvironment(), [name]: 'leaked-value' }),
+    ).toThrow(
       expect.objectContaining({
-        message: expect.not.stringContaining("leaked-value"),
+        message: expect.not.stringContaining('leaked-value'),
       }),
     );
   });
 });
 
-describe("未知の環境変数", () => {
-  test("検証対象外の変数を無視する", () => {
+describe('未知の環境変数', () => {
+  test('検証対象外の変数を無視する', () => {
     const runtime = loadRuntimeConfig({
       ...validEnvironment(),
-      AWS_SECRET_ACCESS_KEY: "leaked-secret",
+      AWS_SECRET_ACCESS_KEY: 'leaked-secret',
     });
 
     expect(runtime.port).toBe(8080);
   });
 
-  test("検証対象外の変数の値をエラーメッセージに含めない", () => {
+  test('検証対象外の変数の値をエラーメッセージに含めない', () => {
     expect(() =>
       loadRuntimeConfig({
         ...validEnvironment(),
-        POWER_MANAGER_PORT: "not-a-port",
-        AWS_SECRET_ACCESS_KEY: "leaked-secret",
+        POWER_MANAGER_PORT: 'not-a-port',
+        AWS_SECRET_ACCESS_KEY: 'leaked-secret',
       }),
-    ).toThrow(expect.objectContaining({ message: expect.not.stringContaining("leaked-secret") }));
+    ).toThrow(
+      expect.objectContaining({
+        message: expect.not.stringContaining('leaked-secret'),
+      }),
+    );
   });
 });

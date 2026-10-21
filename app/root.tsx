@@ -1,4 +1,4 @@
-import type { Route } from "./+types/root";
+import type { Route } from './+types/root';
 import {
   Links,
   Meta,
@@ -7,12 +7,12 @@ import {
   ScrollRestoration,
   isRouteErrorResponse,
   useRouteError,
-} from "react-router";
-import type { ReactNode } from "react";
+} from 'react-router';
+import type { ReactNode } from 'react';
 
-import { authMiddleware } from "./lib/auth.server.ts";
-import { csrfMiddleware } from "./lib/csrf.server.ts";
-import "./app.css";
+import { authMiddleware } from './lib/auth.server.ts';
+import { csrfMiddleware } from './lib/csrf.server.ts';
+import './app.css';
 
 export function Layout({ children }: { children: ReactNode }) {
   return (
@@ -50,7 +50,10 @@ export default function Root() {
  * 画面・action・リソースルートのすべてが対象になる（`docs/security.md` 2.2）。
  * 認証を免除するのは `authMiddleware` 内で判定する `/healthz` のみ（SEC-10）。
  */
-export const middleware: Route.MiddlewareFunction[] = [authMiddleware, csrfMiddleware];
+export const middleware: Route.MiddlewareFunction[] = [
+  authMiddleware,
+  csrfMiddleware,
+];
 
 /**
  * 本番向けの汎用エラー表示。内部エラーの詳細は表示しない（SEC-05）。

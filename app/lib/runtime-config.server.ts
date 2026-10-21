@@ -15,7 +15,7 @@
  * 未知項目はすべての階層で拒否する（`strictObject`）。設定ファイルへ後から足した項目が
  * 黙って無視されると、利用者は「設定したのに効かない」状態に気付けない（FR-09, SEC-06）。
  */
-import { z } from "zod";
+import { z } from 'zod';
 
 import {
   powerOperations,
@@ -24,28 +24,28 @@ import {
   weekdays,
   type ManagedConfig,
   type RepeatKind,
-} from "./model.ts";
+} from './model.ts';
 
 /** 検証メッセージ。項目名は指摘の path に出るため、ここでは理由だけを書く。 */
 const messages = {
-  required: "必須です",
-  stringType: "文字列で指定してください",
-  numberType: "数値で指定してください",
-  booleanType: "真偽値で指定してください",
-  arrayType: "配列で指定してください",
-  objectType: "オブジェクトで指定してください",
-  empty: "空にできません",
-  surroundingWhitespace: "前後に空白を含めないでください",
-  unknownKey: "未知の項目です",
-  version: "2 を指定してください（v1 形式は未対応です）",
-  operation: `${powerOperations.join(" か ")} を指定してください`,
-  targetType: `type に ${targetTypes.join(" か ")} を指定し、id を 1 つだけ持たせてください`,
-  repeatKind: `kind に ${repeatKinds.join(" か ")} を指定してください（weekly は days が必要です）`,
-  macAddress: "MAC アドレスの形式（XX:XX:XX:XX:XX:XX）で指定してください",
-  ipv4: "IPv4 アドレス（例 192.168.1.255）で指定してください",
-  port: "1 から 65535 の整数で指定してください",
-  time: "HH:MM の 24 時間表記で指定してください",
-  integer: "整数で指定してください",
+  required: '必須です',
+  stringType: '文字列で指定してください',
+  numberType: '数値で指定してください',
+  booleanType: '真偽値で指定してください',
+  arrayType: '配列で指定してください',
+  objectType: 'オブジェクトで指定してください',
+  empty: '空にできません',
+  surroundingWhitespace: '前後に空白を含めないでください',
+  unknownKey: '未知の項目です',
+  version: '2 を指定してください（v1 形式は未対応です）',
+  operation: `${powerOperations.join(' か ')} を指定してください`,
+  targetType: `type に ${targetTypes.join(' か ')} を指定し、id を 1 つだけ持たせてください`,
+  repeatKind: `kind に ${repeatKinds.join(' か ')} を指定してください（weekly は days が必要です）`,
+  macAddress: 'MAC アドレスの形式（XX:XX:XX:XX:XX:XX）で指定してください',
+  ipv4: 'IPv4 アドレス（例 192.168.1.255）で指定してください',
+  port: '1 から 65535 の整数で指定してください',
+  time: 'HH:MM の 24 時間表記で指定してください',
+  integer: '整数で指定してください',
 } as const;
 
 /** 欠落を「必須」、型違いを「型が違う」として区別する。 */
@@ -62,7 +62,7 @@ function typeMessage(expected: string) {
  * （FR-09）。
  */
 function objectMessage(issue: { code?: string; input?: unknown }): string {
-  if (issue.code === "unrecognized_keys") return messages.unknownKey;
+  if (issue.code === 'unrecognized_keys') return messages.unknownKey;
   return issue.input === undefined ? messages.required : messages.objectType;
 }
 
@@ -100,7 +100,7 @@ const timeValue = stringValue.regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, {
 
 /** 曜日。値の集合は `app/lib/model.ts` を唯一の定義にする。 */
 const weekdayValue = z.enum(weekdays, {
-  error: "mon/tue/wed/thu/fri/sat/sun のいずれかで指定してください",
+  error: 'mon/tue/wed/thu/fri/sat/sun のいずれかで指定してください',
 });
 
 /** 文字列の配列。 */
@@ -117,7 +117,7 @@ function stringArrayValue() {
 const wolSchema = z
   .strictObject(
     {
-      broadcastAddress: ipv4Value.default("255.255.255.255"),
+      broadcastAddress: ipv4Value.default('255.255.255.255'),
       port: portValue.default(9),
     },
     { error: objectMessage },
@@ -177,12 +177,12 @@ const targetSchema = z.strictObject(
  */
 const repeatSchemas = {
   daily: z.strictObject(
-    { kind: z.literal("daily"), time: timeValue },
+    { kind: z.literal('daily'), time: timeValue },
     { error: objectMessage },
   ),
   weekly: z.strictObject(
     {
-      kind: z.literal("weekly"),
+      kind: z.literal('weekly'),
       days: z.array(weekdayValue, { error: typeMessage(messages.arrayType) }),
       time: timeValue,
     },
@@ -190,10 +190,14 @@ const repeatSchemas = {
   ),
 } satisfies Record<RepeatKind, z.ZodType>;
 
-const repeatSchema = z.discriminatedUnion("kind", [repeatSchemas.daily, repeatSchemas.weekly], {
-  error: (issue) =>
-    issue.input === undefined ? messages.required : messages.repeatKind,
-});
+const repeatSchema = z.discriminatedUnion(
+  'kind',
+  [repeatSchemas.daily, repeatSchemas.weekly],
+  {
+    error: (issue) =>
+      issue.input === undefined ? messages.required : messages.repeatKind,
+  },
+);
 
 /** 予約 1 件（`docs/operations.md` 2.3）。 */
 const scheduleSchema = z.strictObject(
@@ -217,7 +221,9 @@ export const managedConfigSchema = z.strictObject(
     version: z.literal(2, { error: typeMessage(messages.version) }),
     servers: z.array(serverSchema, { error: typeMessage(messages.arrayType) }),
     groups: z.array(groupSchema, { error: typeMessage(messages.arrayType) }),
-    schedules: z.array(scheduleSchema, { error: typeMessage(messages.arrayType) }),
+    schedules: z.array(scheduleSchema, {
+      error: typeMessage(messages.arrayType),
+    }),
   },
   { error: objectMessage },
 );
@@ -233,19 +239,24 @@ export function collectCrossFieldIssues(config: ManagedConfig): string[] {
   const issues: string[] = [];
 
   /** 集合内の重複を見つける。 */
-  function checkUniqueIds(collection: string, items: readonly { id: string }[]): void {
+  function checkUniqueIds(
+    collection: string,
+    items: readonly { id: string }[],
+  ): void {
     const seen = new Set<string>();
     for (const [index, item] of items.entries()) {
       if (seen.has(item.id)) {
-        issues.push(`${collection}.${index}.id: 識別子 ${item.id} が重複しています`);
+        issues.push(
+          `${collection}.${index}.id: 識別子 ${item.id} が重複しています`,
+        );
       }
       seen.add(item.id);
     }
   }
 
-  checkUniqueIds("servers", config.servers);
-  checkUniqueIds("groups", config.groups);
-  checkUniqueIds("schedules", config.schedules);
+  checkUniqueIds('servers', config.servers);
+  checkUniqueIds('groups', config.groups);
+  checkUniqueIds('schedules', config.schedules);
 
   const groupIds = new Set(config.groups.map((group) => group.id));
   const serverIds = new Set(config.servers.map((server) => server.id));
@@ -263,16 +274,23 @@ export function collectCrossFieldIssues(config: ManagedConfig): string[] {
 
   // サーバーを持たないグループはエラー（FR-11）。一括操作の対象が空になる定義を作らせない。
   for (const [index, group] of config.groups.entries()) {
-    const belongs = config.servers.some((server) => server.groups.includes(group.id));
+    const belongs = config.servers.some((server) =>
+      server.groups.includes(group.id),
+    );
     if (!belongs) {
-      issues.push(`groups.${index}: グループ ${group.id} に所属するサーバーがありません`);
+      issues.push(
+        `groups.${index}: グループ ${group.id} に所属するサーバーがありません`,
+      );
     }
   }
 
   // 予約の対象は定義済みのサーバーまたはグループでなければならない（FR-09）。
   for (const [index, schedule] of config.schedules.entries()) {
     const { target } = schedule;
-    const defined = target.type === "server" ? serverIds.has(target.id) : groupIds.has(target.id);
+    const defined =
+      target.type === 'server'
+        ? serverIds.has(target.id)
+        : groupIds.has(target.id);
     if (!defined) {
       issues.push(
         `schedules.${index}.target.id: ${target.type} ${target.id} が定義されていません`,
@@ -280,10 +298,12 @@ export function collectCrossFieldIssues(config: ManagedConfig): string[] {
     }
 
     // 曜日の空配列・重複は予約として意味を持たないため拒否する（FR-12）。
-    if (schedule.repeat.kind === "weekly") {
+    if (schedule.repeat.kind === 'weekly') {
       const { days } = schedule.repeat;
       if (days.length === 0) {
-        issues.push(`schedules.${index}.repeat.days: 曜日を 1 つ以上指定してください`);
+        issues.push(
+          `schedules.${index}.repeat.days: 曜日を 1 つ以上指定してください`,
+        );
       }
       if (new Set(days).size !== days.length) {
         issues.push(`schedules.${index}.repeat.days: 曜日が重複しています`);
@@ -300,8 +320,8 @@ export class ManagedConfigError extends Error {
   readonly issues: readonly string[];
 
   constructor(issues: readonly string[]) {
-    super(`管理対象の設定が不正です（${issues.join(" / ")}）`);
-    this.name = "ManagedConfigError";
+    super(`管理対象の設定が不正です（${issues.join(' / ')}）`);
+    this.name = 'ManagedConfigError';
     this.issues = issues;
   }
 }
@@ -312,8 +332,9 @@ function describeIssues(error: z.ZodError): string[] {
   const seen = new Set<string>();
 
   for (const issue of error.issues) {
-    const path = issue.path.map(String).join(".");
-    const description = path === "" ? issue.message : `${path}: ${issue.message}`;
+    const path = issue.path.map(String).join('.');
+    const description =
+      path === '' ? issue.message : `${path}: ${issue.message}`;
     if (seen.has(description)) continue;
     seen.add(description);
     issues.push(description);
@@ -330,10 +351,12 @@ function describeIssues(error: z.ZodError): string[] {
  */
 export function parseManagedConfig(input: unknown): ManagedConfig {
   const parsed = managedConfigSchema.safeParse(input);
-  if (!parsed.success) throw new ManagedConfigError(describeIssues(parsed.error));
+  if (!parsed.success)
+    throw new ManagedConfigError(describeIssues(parsed.error));
 
   const crossFieldIssues = collectCrossFieldIssues(parsed.data);
-  if (crossFieldIssues.length > 0) throw new ManagedConfigError(crossFieldIssues);
+  if (crossFieldIssues.length > 0)
+    throw new ManagedConfigError(crossFieldIssues);
 
   return parsed.data;
 }

@@ -16,12 +16,15 @@
  * 秘密情報はこのファイルに無い（SEC-04）。停止コマンドは定義に含まれるが、
  * ログ・画面へは出さない（SEC-05）。
  */
-import { readFile } from "node:fs/promises";
+import { readFile } from 'node:fs/promises';
 
-import { createContext, type RouterContext } from "react-router";
+import { createContext, type RouterContext } from 'react-router';
 
-import type { ManagedConfig } from "./model.ts";
-import { ManagedConfigError, parseManagedConfig } from "./runtime-config.server.ts";
+import type { ManagedConfig } from './model.ts';
+import {
+  ManagedConfigError,
+  parseManagedConfig,
+} from './runtime-config.server.ts';
 
 /** 再読込の結果。失敗しても旧設定で動き続けるため、例外ではなく値で返す。 */
 export type ReloadResult =
@@ -53,29 +56,32 @@ export type ConfigStore = {
  * グラフになるため、モジュールスコープでキーを作ると実体が 2 つになり、
  * loader 側の `context.get` が失敗する。
  */
-const configStoreContextSlot = "__powerManagerConfigStoreContext";
+const configStoreContextSlot = '__powerManagerConfigStoreContext';
 
 type ConfigStoreContextRegistry = {
   [configStoreContextSlot]?: RouterContext<ConfigStore>;
 };
 
-const configStoreContextRegistry = globalThis as unknown as ConfigStoreContextRegistry;
+const configStoreContextRegistry =
+  globalThis as unknown as ConfigStoreContextRegistry;
 
 /** loader/action から設定ストアを参照するためのキー。 */
-export const configStoreContext: RouterContext<ConfigStore> = (configStoreContextRegistry[
-  configStoreContextSlot
-] ??= createContext<ConfigStore>());
+export const configStoreContext: RouterContext<ConfigStore> =
+  (configStoreContextRegistry[configStoreContextSlot] ??=
+    createContext<ConfigStore>());
 
 /** `RouterContextProvider` のうち `requireConfigStore` が使う部分。テストで差し替えられるようにする。 */
 type RouterContextProviderLike = { get: <T>(key: RouterContext<T>) => T };
 
 /** load context から設定ストアを読む。未設定なら配線不整合だと分かるエラーにする。 */
-export function requireConfigStore(context: RouterContextProviderLike): ConfigStore {
+export function requireConfigStore(
+  context: RouterContextProviderLike,
+): ConfigStore {
   try {
     return context.get(configStoreContext);
   } catch {
     throw new Error(
-      "設定ストアが load context にありません（server/app.ts の createLoadContext を経由していません）",
+      '設定ストアが load context にありません（server/app.ts の createLoadContext を経由していません）',
     );
   }
 }
@@ -89,25 +95,25 @@ export function requireConfigStore(context: RouterContextProviderLike): ConfigSt
 async function loadFile(configPath: string): Promise<ManagedConfig> {
   let text: string;
   try {
-    text = await readFile(configPath, "utf8");
+    text = await readFile(configPath, 'utf8');
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     throw new ManagedConfigError([
-      code === "ENOENT"
-        ? "設定ファイルが見つかりません"
-        : code === "EACCES"
-          ? "設定ファイルを読み取る権限がありません"
-          : "設定ファイルを読み取れませんでした",
+      code === 'ENOENT'
+        ? '設定ファイルが見つかりません'
+        : code === 'EACCES'
+          ? '設定ファイルを読み取る権限がありません'
+          : '設定ファイルを読み取れませんでした',
     ]);
   }
 
   let parsed: unknown;
   try {
     // BOM 付きのファイルは運用者が用意しうる。JSON.parse は BOM を拒否するため落とす。
-    parsed = JSON.parse(text.replace(/^\uFEFF/, ""));
+    parsed = JSON.parse(text.replace(/^\uFEFF/, ''));
   } catch {
     // パースエラーのメッセージは位置情報と入力の断片を含む。そのままログへ流さない。
-    throw new ManagedConfigError(["JSON として解釈できません"]);
+    throw new ManagedConfigError(['JSON として解釈できません']);
   }
 
   return parseManagedConfig(parsed);
@@ -139,7 +145,7 @@ export function createConfigStore(
         const issues =
           error instanceof ManagedConfigError
             ? error.issues
-            : ["設定を読み込めませんでした"];
+            : ['設定を読み込めませんでした'];
         return {
           ok: false,
           reason: error instanceof Error ? error.message : String(error),
@@ -160,6 +166,8 @@ export function createConfigStore(
  *
  * 起動時の失敗は `server/startup.ts` が終了コード 78 の対象として扱う（FR-08, NFR-05）。
  */
-export function loadManagedConfigForStartup(configPath: string): Promise<ManagedConfig> {
+export function loadManagedConfigForStartup(
+  configPath: string,
+): Promise<ManagedConfig> {
   return loadFile(configPath);
 }

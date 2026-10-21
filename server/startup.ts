@@ -12,21 +12,21 @@
  * どちらの失敗も「設定不備」であり、待受を開始せずに終了コード 78 で終了する。
  * 再起動しても同じ失敗を繰り返すため、再起動抑止の対象にする（NFR-05）。
  */
-import { writeSync } from "node:fs";
+import { writeSync } from 'node:fs';
 
 import {
   ConfigurationError,
   loadRuntimeConfig,
   type RuntimeConfig,
-} from "../app/lib/config.server.ts";
+} from '../app/lib/config.server.ts';
 import {
   createConfigStore,
   loadManagedConfigForStartup,
   type ConfigStore,
-} from "../app/lib/config-store.server.ts";
-import { configurationErrorExitCode } from "../app/lib/exit-codes.ts";
-import type { ManagedConfig } from "../app/lib/model.ts";
-import { ManagedConfigError } from "../app/lib/runtime-config.server.ts";
+} from '../app/lib/config-store.server.ts';
+import { configurationErrorExitCode } from '../app/lib/exit-codes.ts';
+import type { ManagedConfig } from '../app/lib/model.ts';
+import { ManagedConfigError } from '../app/lib/runtime-config.server.ts';
 
 /** 終了処理を差し替えられるようにする（テストで `process.exit` を呼ばせない）。 */
 export type ExitFunction = (code: number) => void;
@@ -56,8 +56,8 @@ export function writeStderrLine(line: string): void {
 function failStartup(error: Error, exit: ExitFunction): never {
   writeStderrLine(
     JSON.stringify({
-      event: "startup_failed",
-      code: "invalid_configuration",
+      event: 'startup_failed',
+      code: 'invalid_configuration',
       reason: error.message,
     }),
   );
@@ -82,16 +82,19 @@ export function exitAfterStartupFailure(
   error: unknown,
   exit: ExitFunction = (code) => process.exit(code),
 ): never {
-  if (error instanceof ConfigurationError || error instanceof ManagedConfigError) {
+  if (
+    error instanceof ConfigurationError ||
+    error instanceof ManagedConfigError
+  ) {
     // `startRuntime` が `startup_failed` を出力済み。追加の出力はしない。
     exit(configurationErrorExitCode);
   } else {
     writeStderrLine(
       JSON.stringify({
-        event: "startup_failed",
-        code: "operation_failed",
+        event: 'startup_failed',
+        code: 'operation_failed',
         // 例外の種別だけを載せ、値やパスは載せない（SEC-05）。
-        reason: error instanceof Error ? error.name : "UnknownError",
+        reason: error instanceof Error ? error.name : 'UnknownError',
       }),
     );
     exit(1);
@@ -127,5 +130,8 @@ export async function startRuntime(
     failStartup(error, exit);
   }
 
-  return { runtime, configStore: createConfigStore(runtime.configPath, managedConfig) };
+  return {
+    runtime,
+    configStore: createConfigStore(runtime.configPath, managedConfig),
+  };
 }

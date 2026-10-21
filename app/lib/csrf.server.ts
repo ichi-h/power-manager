@@ -12,11 +12,11 @@
  * `publicOrigin` はビルド成果物に埋め込めないため、初回の要求で環境変数から読む。
  * `GET`/`HEAD`/`OPTIONS` はこのミドルウェアの対象外にする。
  */
-import { loadRuntimeConfig } from "./config.server.ts";
-import type { Route } from "../+types/root";
+import { loadRuntimeConfig } from './config.server.ts';
+import type { Route } from '../+types/root';
 
 /** 検証対象とする状態変更メソッド。 */
-const stateChangingMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const stateChangingMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 /**
  * 検証済みの `publicOrigin`。初回の要求で評価する。
@@ -37,16 +37,19 @@ export function __resetPublicOriginCache(): void {
 
 /** Origin 不一致・欠落の 403 応答。 */
 function forbidden(): Response {
-  return new Response("Forbidden", { status: 403 });
+  return new Response('Forbidden', { status: 403 });
 }
 
 /**
  * 状態変更要求の `Origin` ヘッダーを検証する。
  * 一致なら `true`、不一致・欠落なら `false`。
  */
-export function isOriginAllowed(request: Request, origin: string = ensurePublicOrigin()): boolean {
+export function isOriginAllowed(
+  request: Request,
+  origin: string = ensurePublicOrigin(),
+): boolean {
   if (!stateChangingMethods.has(request.method)) return true;
-  return request.headers.get("origin") === origin;
+  return request.headers.get('origin') === origin;
 }
 
 /**

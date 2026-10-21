@@ -10,7 +10,7 @@
  * このモジュールが出すのは「設定に含まれる値」ではなく、対象 ID・操作種別・成否・
  * 失敗分類・予約 ID・スキップ理由だけである。
  */
-import type { PowerOperationRecord } from "./power.server.ts";
+import type { PowerOperationRecord } from './power.server.ts';
 
 /**
  * 電源操作の結果を 1 行 JSON で標準出力へ出す（NFR-10）。
@@ -24,13 +24,15 @@ import type { PowerOperationRecord } from "./power.server.ts";
 export function logPowerOperation(
   record: PowerOperationRecord,
   event:
-    "power_operation" | "schedule_run" | "schedule_skip" = "power_operation",
+    | 'power_operation'
+    | 'schedule_run'
+    | 'schedule_skip' = 'power_operation',
 ): void {
   console.log(
     JSON.stringify({
       event,
-      serverId: record.target.type === "server" ? record.target.id : undefined,
-      groupId: record.target.type === "group" ? record.target.id : undefined,
+      serverId: record.target.type === 'server' ? record.target.id : undefined,
+      groupId: record.target.type === 'group' ? record.target.id : undefined,
       operation: record.operation,
       result: record.result,
       code: record.code,
@@ -51,11 +53,11 @@ export function logPowerOperation(
 export function logScheduleSkip(
   scheduleId: string,
   target: { readonly type: string; readonly id: string },
-  code: "busy" | "missed_schedule",
+  code: 'busy' | 'missed_schedule',
 ): void {
   console.log(
     JSON.stringify({
-      event: "schedule_skip",
+      event: 'schedule_skip',
       scheduleId,
       target: { type: target.type, id: target.id },
       code,

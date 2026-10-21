@@ -7,24 +7,24 @@
  *
  * CLI 引数は受け付けない（NFR-06）。設定は環境変数だけで渡す。
  */
-import { createServer } from "node:http";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import { createServer } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 
-import { configurationErrorExitCode } from "../app/lib/exit-codes.ts";
-import { createAppListener } from "./app.ts";
-import { logRequestFailure } from "./log.ts";
-import { serveStatic } from "./static.ts";
+import { configurationErrorExitCode } from '../app/lib/exit-codes.ts';
+import { createAppListener } from './app.ts';
+import { logRequestFailure } from './log.ts';
+import { serveStatic } from './static.ts';
 import {
   exitAfterStartupFailure,
   startRuntime,
   writeStderrLine,
   type StartupResult,
-} from "./startup.ts";
+} from './startup.ts';
 
 const forcedExitMilliseconds = 5_000;
 
 /** 待受アドレスの不備として扱う `error.code`。設定変更で解消できるため再起動しても無駄になる。 */
-const listenAddressErrorCodes = new Set(["EADDRINUSE", "EACCES", "EINVAL"]);
+const listenAddressErrorCodes = new Set(['EADDRINUSE', 'EACCES', 'EINVAL']);
 
 // 引数は解釈しない。設定は環境変数だけで渡す（NFR-06）。
 //
@@ -50,18 +50,21 @@ const requestListener = createAppListener(runtime, configStore);
 
 const server = createServer(
   (request: IncomingMessage, response: ServerResponse) => {
-    serveStatic(request, response).then((handled) => {
-      if (!handled) requestListener(request, response);
-    }, (error: unknown) => {
-      logRequestFailure(error);
-      if (!response.headersSent) response.writeHead(500);
-      response.end();
-    });
+    serveStatic(request, response).then(
+      (handled) => {
+        if (!handled) requestListener(request, response);
+      },
+      (error: unknown) => {
+        logRequestFailure(error);
+        if (!response.headersSent) response.writeHead(500);
+        response.end();
+      },
+    );
   },
 );
 
-server.listen(runtime.port, "127.0.0.1", () => {
-  console.log(JSON.stringify({ event: "started", port: runtime.port }));
+server.listen(runtime.port, '127.0.0.1', () => {
+  console.log(JSON.stringify({ event: 'started', port: runtime.port }));
 });
 
 /**
@@ -74,14 +77,14 @@ server.listen(runtime.port, "127.0.0.1", () => {
  * `server` の `error` は待受の前後にしか意味を持たない（待受成功後の接続の失敗は個々の
  * リクエストエラーになる）ため、イベント名は `startup_failed` のままでよい。
  */
-server.on("error", (error: NodeJS.ErrnoException) => {
+server.on('error', (error: NodeJS.ErrnoException) => {
   const isListenAddressError =
     error.code !== undefined && listenAddressErrorCodes.has(error.code);
 
   writeStderrLine(
     JSON.stringify({
-      event: "startup_failed",
-      code: isListenAddressError ? "invalid_configuration" : "operation_failed",
+      event: 'startup_failed',
+      code: isListenAddressError ? 'invalid_configuration' : 'operation_failed',
       reason: error.message,
     }),
   );
@@ -98,7 +101,7 @@ let shuttingDown = false;
 function shutdown(signal: NodeJS.Signals): void {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(JSON.stringify({ event: "shutdown", signal }));
+  console.log(JSON.stringify({ event: 'shutdown', signal }));
 
   const forcedExitTimeout = setTimeout(() => {
     process.exit(1);
@@ -110,5 +113,5 @@ function shutdown(signal: NodeJS.Signals): void {
   });
 }
 
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);

@@ -13,7 +13,7 @@
  */
 const scope = globalThis as unknown as Record<string, unknown>;
 
-if (typeof scope.window === "object" && scope.window !== null) {
+if (typeof scope.window === 'object' && scope.window !== null) {
   const windowScope = scope.window as Record<string, unknown>;
   windowScope.__vite_plugin_react_preamble_installed__ = true;
   windowScope.$RefreshReg$ = () => {};

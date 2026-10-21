@@ -13,11 +13,11 @@
  * `app/lib/runtime-config.server.ts` が済ませているため、ここでは「不正な定義」を
  * 考えない。
  */
-import { spawn } from "node:child_process";
-import { connect } from "node:net";
-import { createSocket } from "node:dgram";
+import { spawn } from 'node:child_process';
+import { connect } from 'node:net';
+import { createSocket } from 'node:dgram';
 
-import type { PowerOperation, ServerState, Target } from "./model.ts";
+import type { PowerOperation, ServerState, Target } from './model.ts';
 
 /** 死活確認 1 件あたりのタイムアウト（ミリ秒）。タイムアウトは `offline` とする（NFR-07）。 */
 export const checkTimeoutMs = 5_000;
@@ -30,18 +30,18 @@ export const sshTimeoutMs = 30_000;
 
 /** 電源操作の失敗・拒否分類（`docs/architecture.md` 7 章）。 */
 export const powerOperationCodes = [
-  "invalid_configuration",
-  "ssh_unavailable",
-  "operation_failed",
-  "busy",
-  "missed_schedule",
+  'invalid_configuration',
+  'ssh_unavailable',
+  'operation_failed',
+  'busy',
+  'missed_schedule',
 ] as const;
 
 /** 電源操作の失敗・拒否分類。 */
 export type PowerOperationCode = (typeof powerOperationCodes)[number];
 
 /** 電源操作 1 回の成否。 */
-export type PowerResult = "succeeded" | "failed" | "skipped";
+export type PowerResult = 'succeeded' | 'failed' | 'skipped';
 
 /** 単体操作の結果。 */
 export type SingleOperationOutcome = {
@@ -58,12 +58,12 @@ export type SingleOperationOutcome = {
  * 扱えるように `null` を返す。
  */
 export function parseMacAddress(macAddress: string): Uint8Array | null {
-  const parts = macAddress.split(":");
+  const parts = macAddress.split(':');
   if (parts.length !== 6) return null;
   const bytes = new Uint8Array(6);
   for (let index = 0; index < 6; index += 1) {
-    const byte = Number.parseInt(parts[index] ?? "", 16);
-    if (!/^[0-9A-Fa-f]{2}$/.test(parts[index] ?? "")) return null;
+    const byte = Number.parseInt(parts[index] ?? '', 16);
+    if (!/^[0-9A-Fa-f]{2}$/.test(parts[index] ?? '')) return null;
     bytes[index] = byte;
   }
   return bytes;
@@ -98,20 +98,20 @@ async function createDefaultSocket(): Promise<{
 } | null> {
   let socket: ReturnType<typeof createSocket> | null = null;
   try {
-    socket = createSocket("udp4");
+    socket = createSocket('udp4');
   } catch {
     return null;
   }
   const bound = new Promise<void>((resolve, reject) => {
-    socket!.once("error", reject);
-    socket!.bind(0, () => {
-      socket!.removeListener("error", reject);
+    socket?.once('error', reject);
+    socket?.bind(0, () => {
+      socket?.removeListener('error', reject);
       // ブロードキャストアドレス宛の送信には SO_BROADCAST が要る。設定に失敗したら
       // `bind` 失敗と同じく `null` を返して `operation_failed` 扱いにする。
       try {
-        socket!.setBroadcast(true);
+        socket?.setBroadcast(true);
       } catch {
-        reject(new Error("setBroadcast failed"));
+        reject(new Error('setBroadcast failed'));
         return;
       }
       resolve();
@@ -121,14 +121,14 @@ async function createDefaultSocket(): Promise<{
     async send(packet: Uint8Array, port2: number, address: string) {
       await bound;
       await new Promise<void>((resolve, reject) => {
-        socket!.send(packet, port2, address, (error) => {
+        socket?.send(packet, port2, address, (error) => {
           if (error) reject(error);
           else resolve();
         });
       });
     },
     close() {
-      socket!.close();
+      socket?.close();
     },
   };
 }
@@ -137,7 +137,7 @@ async function createDefaultSocket(): Promise<{
  * IPv4 アドレス（ドット区切り 4 分節、各 0〜255）として検査する。
  */
 function isIPv4(address: string): boolean {
-  const parts = address.split(".");
+  const parts = address.split('.');
   if (parts.length !== 4) return false;
   return parts.every((part) => {
     if (!/^\d{1,3}$/.test(part)) return false;
@@ -162,20 +162,20 @@ export async function sendWakeOnLan(
   // 設定ストアは検証済みとはいえ、ここは送信先を確定させる最後の関所なので検査して
   // 不正値は `invalid_configuration` に分類する。
   if (packet === null || !isIPv4(broadcastAddress)) {
-    return { result: "failed", code: "invalid_configuration" };
+    return { result: 'failed', code: 'invalid_configuration' };
   }
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    return { result: "failed", code: "invalid_configuration" };
+    return { result: 'failed', code: 'invalid_configuration' };
   }
   const socketResult = await createDefaultSocket();
   if (socketResult === null) {
-    return { result: "failed", code: "operation_failed" };
+    return { result: 'failed', code: 'operation_failed' };
   }
   try {
     await socketResult.send(packet, port, broadcastAddress);
-    return { result: "succeeded", code: null };
+    return { result: 'succeeded', code: null };
   } catch {
-    return { result: "failed", code: "operation_failed" };
+    return { result: 'failed', code: 'operation_failed' };
   } finally {
     socketResult.close();
   }
@@ -206,15 +206,15 @@ export function createShutdownOverSsh(
 }) => Promise<SingleOperationOutcome> {
   return async (target) => {
     const args = [
-      "-i",
+      '-i',
       target.runtime.sshIdentityFile,
-      "-o",
-      "BatchMode=yes",
-      "-o",
-      "StrictHostKeyChecking=yes",
-      "-o",
+      '-o',
+      'BatchMode=yes',
+      '-o',
+      'StrictHostKeyChecking=yes',
+      '-o',
       `UserKnownHostsFile=${target.runtime.sshKnownHostsFile}`,
-      "-p",
+      '-p',
       String(target.ssh.port),
       `${target.ssh.user}@${target.ssh.host}`,
       target.ssh.shutdownCommand,
@@ -227,26 +227,26 @@ export function createShutdownOverSsh(
         clearTimeout(timer);
         resolve(outcome);
       };
-      const child = spawn(sshBinary, args, { stdio: "ignore" });
+      const child = spawn(sshBinary, args, { stdio: 'ignore' });
       const timer = setTimeout(() => {
-        child.kill("SIGKILL");
-        settle({ result: "failed", code: "operation_failed" });
+        child.kill('SIGKILL');
+        settle({ result: 'failed', code: 'operation_failed' });
       }, timeoutMs);
       timer.unref?.();
-      child.once("error", (error) => {
+      child.once('error', (error) => {
         const code = (error as NodeJS.ErrnoException).code;
         settle(
-          code === "ENOENT"
-            ? { result: "failed", code: "ssh_unavailable" }
-            : { result: "failed", code: "operation_failed" },
+          code === 'ENOENT'
+            ? { result: 'failed', code: 'ssh_unavailable' }
+            : { result: 'failed', code: 'operation_failed' },
         );
       });
-      child.once("exit", (code, signal) => {
+      child.once('exit', (code, signal) => {
         if (code === 0) {
-          settle({ result: "succeeded", code: null });
+          settle({ result: 'succeeded', code: null });
         } else {
           void signal;
-          settle({ result: "failed", code: "operation_failed" });
+          settle({ result: 'failed', code: 'operation_failed' });
         }
       });
     });
@@ -286,14 +286,14 @@ export function createTcpCheck(timeoutMs: number) {
         resolve(state);
       };
 
-      const timeout = setTimeout(() => finish("offline"), timeoutMs);
+      const timeout = setTimeout(() => finish('offline'), timeoutMs);
       // ソケットの待ち受けだけでは打ち切れない環境でイベントループを保持しない。
       timeout.unref?.();
 
-      socket.once("connect", () => finish("online"));
-      socket.once("error", () => finish("offline"));
+      socket.once('connect', () => finish('online'));
+      socket.once('error', () => finish('offline'));
       // 接続の成否が確定する前に切れても `offline` として扱う。
-      socket.once("close", () => finish("offline"));
+      socket.once('close', () => finish('offline'));
     });
   };
 }
@@ -545,7 +545,7 @@ export function createPowerOperator(
     readonly runShutdown?: OperateServer;
   } = {},
 ): PowerOperator {
-  const { sshBinary = "ssh", onRecord = () => {} } = options;
+  const { sshBinary = 'ssh', onRecord = () => {} } = options;
   const shutdown: OperateServer =
     options.runShutdown ??
     (async (_serverId, _target2, _operation, server, runtime) =>
@@ -599,8 +599,8 @@ export function createPowerOperator(
     });
     if (busy.has(serverId)) {
       const skipped = record({
-        result: "skipped",
-        code: "busy",
+        result: 'skipped',
+        code: 'busy',
       } as SingleOperationOutcome);
       try {
         onRecord(skipped);
@@ -615,7 +615,7 @@ export function createPowerOperator(
       await acquire();
       try {
         outcome =
-          operation === "wake"
+          operation === 'wake'
             ? await runWake(
                 server.macAddress,
                 server.wol.broadcastAddress,
@@ -649,7 +649,7 @@ export function createPowerOperator(
         servers.map(async (server) =>
           operateOne(
             server.id,
-            { type: "server", id: server.id },
+            { type: 'server', id: server.id },
             operation,
             server,
             runtime,

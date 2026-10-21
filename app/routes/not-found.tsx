@@ -1,4 +1,4 @@
-import { data, Link } from "react-router";
+import { data, Link } from 'react-router';
 
 export function loader() {
   return data(null, { status: 404 });

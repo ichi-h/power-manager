@@ -10,34 +10,34 @@
  * 要求ごとに環境変数を読み直さない。設定ストアは同一インスタンスを共有し、
  * 再読込の差し替えがすべての要求へ見えるようにする。
  */
-import { createRequestListener } from "@react-router/node";
-import { RouterContextProvider, type ServerBuild } from "react-router";
+import { createRequestListener } from '@react-router/node';
+import { RouterContextProvider, type ServerBuild } from 'react-router';
 
 import {
   configContext,
   toPublicRuntimeConfig,
   type RuntimeConfig,
-} from "../app/lib/config.server.ts";
+} from '../app/lib/config.server.ts';
 import {
   configStoreContext,
   type ConfigStore,
-} from "../app/lib/config-store.server.ts";
+} from '../app/lib/config-store.server.ts';
 import {
   createOperationHistory,
   historyContext,
   type OperationHistory,
-} from "../app/lib/history.server.ts";
-import { logPowerOperation } from "../app/lib/power-log.server.ts";
+} from '../app/lib/history.server.ts';
+import { logPowerOperation } from '../app/lib/power-log.server.ts';
 import {
   createPowerOperator,
   createStatusChecker,
   type PowerOperationRecord,
   type StatusChecker,
-} from "../app/lib/power.server.ts";
-import { operatorContext } from "../app/lib/operator-context.server.ts";
-import { statusCheckerContext } from "../app/lib/status-checker-context.ts";
-import { sshRuntimeContext } from "../app/lib/ssh-runtime-context.server.ts";
-import { logRequestFailure } from "./log.ts";
+} from '../app/lib/power.server.ts';
+import { operatorContext } from '../app/lib/operator-context.server.ts';
+import { statusCheckerContext } from '../app/lib/status-checker-context.ts';
+import { sshRuntimeContext } from '../app/lib/ssh-runtime-context.server.ts';
+import { logRequestFailure } from './log.ts';
 
 export type {
   ConfigStore,
@@ -105,7 +105,7 @@ export function createLoadContext(
  * `react-router build` が生成する ServerBuild を読み込む。
  * 型解決の対象外にするため、パスは変数として渡す。
  */
-const serverBuildPath = "../build/server/index.js";
+const serverBuildPath = '../build/server/index.js';
 
 /**
  * ServerBuild の `entry.module.handleError` を差し替える。
@@ -165,7 +165,7 @@ export function createAppListener(
   return createRequestListener({
     build: () => loadServerBuild(runtime),
     // 明示しないと `develop` 扱いになり、開発用の挙動が残る（SEC-05）。
-    mode: "production",
+    mode: 'production',
     getLoadContext: () => createLoadContext(runtime, configStore),
   });
 }

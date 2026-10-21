@@ -17,9 +17,9 @@
  * 浅いコピー（配列のコピー）で返すが、要素オブジェクトは凍結済みのため、
  * 呼び出し側が要素フィールドを書き換えても内部の保持へ波及しない。
  */
-import { createContext, type RouterContext } from "react-router";
+import { createContext, type RouterContext } from 'react-router';
 
-import type { PowerOperationRecord } from "./power.server.ts";
+import type { PowerOperationRecord } from './power.server.ts';
 
 /** 保持件数の既定値（FR-13）。環境変数などで変える設定項目は持たない。 */
 export const historyCapacity = 100;
@@ -47,7 +47,7 @@ export type OperationHistory = {
 export function createOperationHistory(
   capacity: number = historyCapacity,
 ): OperationHistory {
-  let records: Array<PowerOperationRecord> = [];
+  const records: Array<PowerOperationRecord> = [];
 
   return {
     push(record: PowerOperationRecord) {
@@ -55,7 +55,8 @@ export function createOperationHistory(
       // バッファ内の保持へは波及しない。
       records.push(Object.freeze(record));
       // push は必ず 1 件だけ増やすため、超過時の破棄は固定の 1 件で足りる。
-      if (records.length > capacity) records.splice(0, records.length - capacity);
+      if (records.length > capacity)
+        records.splice(0, records.length - capacity);
     },
 
     recent() {
@@ -75,7 +76,7 @@ export function createOperationHistory(
  * モジュールグラフになるため、モジュールスコープでキーを作ると実体が 2 つになり、
  * loader 側の `context.get` が失敗する。
  */
-const historyContextSlot = "__powerManagerHistoryContext";
+const historyContextSlot = '__powerManagerHistoryContext';
 
 type HistoryContextRegistry = {
   [historyContextSlot]?: RouterContext<OperationHistory>;
@@ -84,20 +85,22 @@ type HistoryContextRegistry = {
 const historyContextRegistry = globalThis as unknown as HistoryContextRegistry;
 
 /** loader/action からリングバッファを参照するためのキー。`server/app.ts` が実体を設定する。 */
-export const historyContext: RouterContext<OperationHistory> = (
-  historyContextRegistry[historyContextSlot] ??= createContext<OperationHistory>()
-);
+export const historyContext: RouterContext<OperationHistory> =
+  (historyContextRegistry[historyContextSlot] ??=
+    createContext<OperationHistory>());
 
 /** `RouterContextProvider` のうち `requireHistory` が使う部分。テストで差し替えられるようにする。 */
 type RouterContextProviderLike = { get: <T>(key: RouterContext<T>) => T };
 
 /** load context からリングバッファを読む。未設定なら配線不整合だと分かるエラーにする。 */
-export function requireHistory(context: RouterContextProviderLike): OperationHistory {
+export function requireHistory(
+  context: RouterContextProviderLike,
+): OperationHistory {
   try {
     return context.get(historyContext);
   } catch (cause) {
     throw new Error(
-      "リングバッファが load context にありません（server/app.ts の createLoadContext を経由していません）",
+      'リングバッファが load context にありません（server/app.ts の createLoadContext を経由していません）',
       { cause },
     );
   }

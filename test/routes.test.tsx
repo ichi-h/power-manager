@@ -10,26 +10,28 @@ import {
   createStaticHandler,
   createStaticRouter,
   StaticRouterProvider,
-} from "react-router";
-import { renderToString } from "react-dom/server";
-import { describe, expect, test } from "vitest";
+} from 'react-router';
+import { renderToString } from 'react-dom/server';
+import { describe, expect, test } from 'vitest';
 
-import Root, { ErrorBoundary } from "../app/root.tsx";
-import Dashboard, { type DashboardLoaderData } from "../app/routes/dashboard.tsx";
-import NotFound from "../app/routes/not-found.tsx";
+import Root, { ErrorBoundary } from '../app/root.tsx';
+import Dashboard, {
+  type DashboardLoaderData,
+} from '../app/routes/dashboard.tsx';
+import NotFound from '../app/routes/not-found.tsx';
 
 const loaderData: DashboardLoaderData = {
-  servers: [{ id: "nas", name: "NAS", groups: ["storage"] }],
-  groups: [{ id: "storage", name: "ストレージ" }],
-  states: { nas: "online" },
+  servers: [{ id: 'nas', name: 'NAS', groups: ['storage'] }],
+  groups: [{ id: 'storage', name: 'ストレージ' }],
+  states: { nas: 'online' },
   recent: [],
 };
 
-describe("画面", () => {
-  test("root がアプリケーションのレイアウトを描画する", async () => {
+describe('画面', () => {
+  test('root がアプリケーションのレイアウトを描画する', async () => {
     const handler = createStaticHandler([
       {
-        path: "/",
+        path: '/',
         Component: Root,
         // 描画だけを確かめるため、route が渡す props は `as never` で満たす。
         children: [
@@ -42,33 +44,37 @@ describe("画面", () => {
         ],
       },
     ]);
-    const context = await handler.query(new Request("http://localhost/"));
+    const context = await handler.query(new Request('http://localhost/'));
     const html = renderToString(
       <StaticRouterProvider
         router={createStaticRouter(handler.dataRoutes, context as never)}
         context={context as never}
       />,
     );
-    expect(html).toContain("power-manager");
-    expect(html).toContain("サーバー一覧");
+    expect(html).toContain('power-manager');
+    expect(html).toContain('サーバー一覧');
     // 一覧の行がサーバー側で描画される（スクリプト無効時も一覧が読める, NFR-09）。
-    expect(html).toContain("状態: <!-- -->オンライン");
+    expect(html).toContain('状態: <!-- -->オンライン');
   });
 
-  test("未知のパスは見つからない旨を表示する", () => {
+  test('未知のパスは見つからない旨を表示する', () => {
     const Stub = createRoutesStub([
-      { path: "/", Component: Root, children: [{ path: "*", Component: NotFound }] },
+      {
+        path: '/',
+        Component: Root,
+        children: [{ path: '*', Component: NotFound }],
+      },
     ]);
-    const html = renderToString(<Stub initialEntries={["/unknown"]} />);
-    expect(html).toContain("ページが見つかりません");
+    const html = renderToString(<Stub initialEntries={['/unknown']} />);
+    expect(html).toContain('ページが見つかりません');
   });
 });
 
-describe("エラーバウンダリ", () => {
-  test("内部エラーの詳細を表示しない", async () => {
+describe('エラーバウンダリ', () => {
+  test('内部エラーの詳細を表示しない', async () => {
     const handler = createStaticHandler([
       {
-        path: "/",
+        path: '/',
         Component: Root,
         ErrorBoundary,
         children: [
@@ -76,23 +82,23 @@ describe("エラーバウンダリ", () => {
             index: true,
             Component: () => null,
             loader: () => {
-              throw new Error("内部の詳細情報");
+              throw new Error('内部の詳細情報');
             },
           },
         ],
       },
     ]);
-    const context = await handler.query(new Request("http://localhost/"));
+    const context = await handler.query(new Request('http://localhost/'));
     const html = renderToString(
       <StaticRouterProvider
         router={createStaticRouter(handler.dataRoutes, context as never)}
         context={context as never}
       />,
     );
-    expect(html).toContain("処理を完了できませんでした");
+    expect(html).toContain('処理を完了できませんでした');
     // 詳細は本番モードのハンドラが除外する（sanitizeErrors）。ここでは画面の本文に
     // 現れないことを確認する。
-    const visible = html.split("<script>")[0] ?? "";
-    expect(visible).not.toContain("内部の詳細情報");
+    const visible = html.split('<script>')[0] ?? '';
+    expect(visible).not.toContain('内部の詳細情報');
   });
 });

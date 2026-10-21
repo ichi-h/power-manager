@@ -8,19 +8,19 @@
  * `/healthz` でないパスは、root に適用されたこのミドルウェアと CSRF ミドルウェア
  * （`app/lib/csrf.server.ts`）がすべての要求を検査する（FR-10, SEC-03）。
  */
-import { verify } from "argon2";
-import type { Route } from "../+types/root";
-import { createContext, type RouterContext } from "react-router";
+import { verify } from 'argon2';
+import type { Route } from '../+types/root';
+import { createContext, type RouterContext } from 'react-router';
 
-import { loadRuntimeConfig, type RuntimeConfig } from "./config.server.ts";
+import { loadRuntimeConfig, type RuntimeConfig } from './config.server.ts';
 
 export type { RuntimeConfig };
 
 /** 認証を免除するパス。この 1 パスに限定する（SEC-10）。 */
-const authExemptPath = "/healthz";
+const authExemptPath = '/healthz';
 
 /** 401 に載せる `WWW-Authenticate` の realm。 */
-const basicRealm = "power-manager";
+const basicRealm = 'power-manager';
 
 /**
  * 認証済み利用者を保持する load context のキー。
@@ -30,7 +30,7 @@ const basicRealm = "power-manager";
  * モジュールスコープで `createContext()` すると実体が 2 つになり、ミドルウェアが
  * 設定した値を loader/action 側の `context.get(authContext)` で引けなくなる。
  */
-const authContextSlot = "__powerManagerAuthContext";
+const authContextSlot = '__powerManagerAuthContext';
 
 type AuthContextRegistry = {
   [authContextSlot]?: RouterContext<string>;
@@ -48,30 +48,34 @@ export const authContext: RouterContext<string> = (authContextRegistry[
  * ユーザー名不一致とパスワード不一致は区別しない（`docs/security.md` 2.3）。
  */
 function unauthorized(): Response {
-  return new Response("Unauthorized", {
+  return new Response('Unauthorized', {
     status: 401,
-    headers: { "WWW-Authenticate": `Basic realm="${basicRealm}"` },
+    headers: { 'WWW-Authenticate': `Basic realm="${basicRealm}"` },
   });
 }
 
 /** `Authorization` からユーザー名とパスワードを取り出す。形式が違う場合は `null`。 */
-function parseBasicCredentials(header: string): { username: string; password: string } | null {
-  if (!header.startsWith("Basic ")) return null;
+function parseBasicCredentials(
+  header: string,
+): { username: string; password: string } | null {
+  if (!header.startsWith('Basic ')) return null;
 
   // Base64 はバイト列を表す。`atob` は latin1 の 1:1 文字列化しかしないため
   // マルチバイト UTF-8 の資格情報を壊す。TextDecoder で UTF-8 としてデコードする
   // （RFC 7617 の既定文字集合は UTF-8）。
   let decoded: string;
   try {
-    const bytes = Uint8Array.from(atob(header.slice("Basic ".length)), (c) => c.charCodeAt(0));
+    const bytes = Uint8Array.from(atob(header.slice('Basic '.length)), (c) =>
+      c.charCodeAt(0),
+    );
     // 不正な UTF-8 バイト列（ lone surrogate byte 等）もここで 401 に落とす。
-    decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
     return null;
   }
 
   // 最初の `:` で区切る。パスワードは `:` を含んでいてよい。
-  const separator = decoded.indexOf(":");
+  const separator = decoded.indexOf(':');
   if (separator < 0) return null;
   return {
     username: decoded.slice(0, separator),
@@ -111,7 +115,7 @@ export async function authenticate(
   request: Request,
   runtime: RuntimeConfig = ensureRuntimeConfig(),
 ): Promise<Response | string> {
-  const header = request.headers.get("authorization");
+  const header = request.headers.get('authorization');
   if (header === null) return unauthorized();
 
   const credentials = parseBasicCredentials(header);
@@ -136,7 +140,10 @@ export async function authenticate(
  * `/healthz` だけ早期に `next()` し、それ以外は `Authorization` の検証を通ってから
  * `context` へ認証済み利用者を設定する。root に適用されるため全ルートへ継承される。
  */
-export const authMiddleware: Route.MiddlewareFunction = async ({ request, context }, next) => {
+export const authMiddleware: Route.MiddlewareFunction = async (
+  { request, context },
+  next,
+) => {
   const path = new URL(request.url).pathname;
   if (path === authExemptPath) return next();
 

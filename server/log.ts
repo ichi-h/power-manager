@@ -10,11 +10,11 @@
 /** `request_failed` の `code`。分類が粗くても秘密は漏れないため、当てはまらなければ internal にする。 */
 export type RequestFailureCode =
   /** action の Origin が公開 Origin と一致しない（CSRF 検査）。 */
-  | "csrf_rejected"
+  | 'csrf_rejected'
   /** Origin ヘッダーの解釈失敗、405、想定内の 404 など、要求側の問題で拒否した。 */
-  | "request_rejected"
+  | 'request_rejected'
   /** 未捕捉の例外。 */
-  | "internal_error";
+  | 'internal_error';
 
 /**
  * CSRF 検査の失敗かどうか。
@@ -27,7 +27,7 @@ function isCsrfRejection(error: unknown): boolean {
   return (
     error instanceof Error &&
     error.message.startsWith(
-      "The `request.url` origin does not match `origin` header from a forwarded action request",
+      'The `request.url` origin does not match `origin` header from a forwarded action request',
     )
   );
 }
@@ -43,9 +43,9 @@ function isCsrfRejection(error: unknown): boolean {
 function isRouteErrorResponseLike(
   error: unknown,
 ): error is { status: number; statusText?: string } {
-  if (typeof error !== "object" || error === null) return false;
+  if (typeof error !== 'object' || error === null) return false;
   const status = (error as { status?: unknown }).status;
-  return typeof status === "number" && status >= 400 && status <= 599;
+  return typeof status === 'number' && status >= 400 && status <= 599;
 }
 
 /**
@@ -54,29 +54,30 @@ function isRouteErrorResponseLike(
  */
 export function describeError(error: unknown): string {
   if (isRouteErrorResponseLike(error)) return `status ${error.status}`;
-  if (!(error instanceof Error)) return "unknown";
-  if (error.name === "AbortError") return "aborted";
+  if (!(error instanceof Error)) return 'unknown';
+  if (error.name === 'AbortError') return 'aborted';
 
-  const message = error.message.replace(/\s+/g, " ").trim();
-  if (message === "") return "unknown";
+  const message = error.message.replace(/\s+/g, ' ').trim();
+  if (message === '') return 'unknown';
   return message.length > 200 ? `${message.slice(0, 200)}…` : message;
 }
 
 /** 失敗の理由を `code` へ分類する。 */
 export function classifyRequestFailure(error: unknown): RequestFailureCode {
-  if (isCsrfRejection(error)) return "csrf_rejected";
+  if (isCsrfRejection(error)) return 'csrf_rejected';
   // 405（action を持たないパスへの POST）などは想定内の拒否であり、内部障害ではない。
-  if (isRouteErrorResponseLike(error)) return "request_rejected";
+  if (isRouteErrorResponseLike(error)) return 'request_rejected';
   // React Router は Origin ヘッダーが解釈できない場合も `Error` を投げる。
-  if (error instanceof Error && error.message.includes("origin")) return "request_rejected";
-  return "internal_error";
+  if (error instanceof Error && error.message.includes('origin'))
+    return 'request_rejected';
+  return 'internal_error';
 }
 
 /** 標準エラーへ 1 行 JSON を出す。 */
 export function logRequestFailure(error: unknown): void {
   console.error(
     JSON.stringify({
-      event: "request_failed",
+      event: 'request_failed',
       code: classifyRequestFailure(error),
       reason: describeError(error),
     }),

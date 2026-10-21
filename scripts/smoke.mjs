@@ -6,15 +6,15 @@
  * loopback で待受けて画面が HTML を返すこと、SIGTERM で正常終了することを確認する。
  * 不正な環境変数では待受を開始せず、設定不備を表す終了コードで終了することも見る。
  */
-import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { createServer } from "node:net";
-import path from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { createServer } from 'node:net';
+import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
-import { configurationErrorExitCode } from "../app/lib/exit-codes.ts";
+import { configurationErrorExitCode } from '../app/lib/exit-codes.ts';
 
-const serverEntry = "server/index.js";
+const serverEntry = 'server/index.js';
 const timeoutMilliseconds = 30_000;
 /** 不正な設定の子プロセスを待つ上限。待受を開始しないので、長く待つ意味がない。 */
 const invalidExitMilliseconds = 5_000;
@@ -23,29 +23,35 @@ const invalidExitMilliseconds = 5_000;
  * `runtimeEnvironment.POWER_MANAGER_AUTH_PASSWORD_HASH` の平文。
  * 本番の資匿情報とは無関係の、テスト専用の値である。
  */
-const smokeUsername = "smoke";
-const smokePassword = "smoke-password";
+const smokeUsername = 'smoke';
+const smokePassword = 'smoke-password';
 /**
  * 既存のファイルを指せばよい環境変数（秘密鍵・`known_hosts`）の代用。
  * これらは起動時にパスの形式だけを見る。
  */
-const existingFile = process.env.SMOKE_CONFIG_PATH ?? path.resolve("package.json");
+const existingFile =
+  process.env.SMOKE_CONFIG_PATH ?? path.resolve('package.json');
 
 /**
  * 管理対象 JSON。起動時に読み、全体検証する（FR-08, FR-09）。
  * リポジトリ同梱の開発用の例を使う。`package.json` を指すと JSON 検証で終了コード 78 になる。
  */
-const managedConfigPath = process.env.SMOKE_MANAGED_CONFIG ?? path.resolve("dev/config.json");
+const managedConfigPath =
+  process.env.SMOKE_MANAGED_CONFIG ?? path.resolve('dev/config.json');
 
-for (const artifact of ["build/server/index.js", serverEntry]) {
+for (const artifact of ['build/server/index.js', serverEntry]) {
   if (!existsSync(artifact)) {
-    console.error(`${artifact} がありません。先に npm run build を実行してください。`);
+    console.error(
+      `${artifact} がありません。先に npm run build を実行してください。`,
+    );
     process.exit(1);
   }
 }
 
 if (!existsSync(managedConfigPath)) {
-  console.error(`${managedConfigPath} がありません。開発用の設定例を用意してください。`);
+  console.error(
+    `${managedConfigPath} がありません。開発用の設定例を用意してください。`,
+  );
   process.exit(1);
 }
 
@@ -58,17 +64,20 @@ if (!existsSync(managedConfigPath)) {
 async function reserveFreePort() {
   const probe = createServer();
   await new Promise((resolve, reject) => {
-    probe.once("error", reject);
-    probe.listen(0, "127.0.0.1", resolve);
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', resolve);
   });
   const address = probe.address();
-  const port = typeof address === "object" && address !== null ? address.port : 0;
+  const port =
+    typeof address === 'object' && address !== null ? address.port : 0;
   await new Promise((resolve) => probe.close(resolve));
-  if (port === 0) throw new Error("空きポートを確保できませんでした");
+  if (port === 0) throw new Error('空きポートを確保できませんでした');
   return port;
 }
 
-const port = process.env.SMOKE_PORT ? Number(process.env.SMOKE_PORT) : await reserveFreePort();
+const port = process.env.SMOKE_PORT
+  ? Number(process.env.SMOKE_PORT)
+  : await reserveFreePort();
 const host = `localhost:${port}`;
 
 /**
@@ -80,14 +89,14 @@ const host = `localhost:${port}`;
  * リバースプロキシで終端するので、アプリ自身への要求は HTTP になる）。
  */
 const runtimeEnvironment = {
-  NODE_ENV: "production",
+  NODE_ENV: 'production',
   POWER_MANAGER_CONFIG_PATH: managedConfigPath,
   POWER_MANAGER_PORT: String(port),
   POWER_MANAGER_PUBLIC_ORIGIN: `https://${host}`,
   POWER_MANAGER_AUTH_USERNAME: smokeUsername,
   // 平文: smoke-password（スモークテスト専用値。上の smokePassword 参照）
   POWER_MANAGER_AUTH_PASSWORD_HASH:
-    "$argon2id$v=19$m=19456,p=1,t=2$JlZNKAM26Uz/G7BAI3Jzjw$JCl5X7Ttck+HDOKLF/95sbAOWVJ9AbLJS5Xf2txJAlc",
+    '$argon2id$v=19$m=19456,p=1,t=2$JlZNKAM26Uz/G7BAI3Jzjw$JCl5X7Ttck+HDOKLF/95sbAOWVJ9AbLJS5Xf2txJAlc',
   POWER_MANAGER_SSH_IDENTITY_FILE: existingFile,
   POWER_MANAGER_SSH_KNOWN_HOSTS_FILE: existingFile,
 };
@@ -103,7 +112,7 @@ const smokeAuthorization = `Basic ${btoa(`${smokeUsername}:${smokePassword}`)}`;
  */
 function childEnvironment(overrides = {}) {
   return {
-    PATH: process.env.PATH ?? "/usr/bin:/bin",
+    PATH: process.env.PATH ?? '/usr/bin:/bin',
     ...runtimeEnvironment,
     ...overrides,
   };
@@ -111,11 +120,11 @@ function childEnvironment(overrides = {}) {
 
 /** 子プロセスの標準出力・標準エラーを溜める。 */
 function capture(child) {
-  const captured = { stdout: "", stderr: "" };
-  child.stdout.on("data", (chunk) => {
+  const captured = { stdout: '', stderr: '' };
+  child.stdout.on('data', (chunk) => {
     captured.stdout += chunk;
   });
-  child.stderr.on("data", (chunk) => {
+  child.stderr.on('data', (chunk) => {
     captured.stderr += chunk;
   });
   return captured;
@@ -123,13 +132,14 @@ function capture(child) {
 
 const child = spawn(process.execPath, [serverEntry], {
   env: childEnvironment(),
-  stdio: ["ignore", "pipe", "pipe"],
+  stdio: ['ignore', 'pipe', 'pipe'],
 });
 const captured = capture(child);
 
 /** 起動していない子プロセスを確実に落とす。二重に呼んでも害はない。 */
 function killQuietly(target) {
-  if (target.exitCode === null && target.signalCode === null) target.kill("SIGKILL");
+  if (target.exitCode === null && target.signalCode === null)
+    target.kill('SIGKILL');
 }
 
 const deadline = Date.now() + timeoutMilliseconds;
@@ -142,12 +152,16 @@ const deadline = Date.now() + timeoutMilliseconds;
 async function waitForStartedLog() {
   while (Date.now() < deadline) {
     if (child.exitCode !== null) {
-      throw new Error(`サーバーが起動前に終了しました (exit ${child.exitCode})\n${captured.stderr}`);
+      throw new Error(
+        `サーバーが起動前に終了しました (exit ${child.exitCode})\n${captured.stderr}`,
+      );
     }
     if (captured.stdout.includes('"event":"started"')) return;
     await delay(100);
   }
-  throw new Error(`起動ログ (started) が出力されませんでした\n${captured.stderr}`);
+  throw new Error(
+    `起動ログ (started) が出力されませんでした\n${captured.stderr}`,
+  );
 }
 
 async function waitForStarted() {
@@ -156,72 +170,89 @@ async function waitForStarted() {
   let lastFailure = null;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) {
-      throw new Error(`サーバーが起動前に終了しました (exit ${child.exitCode})\n${captured.stderr}`);
+      throw new Error(
+        `サーバーが起動前に終了しました (exit ${child.exitCode})\n${captured.stderr}`,
+      );
     }
     try {
       // 認証なしの要求は 401（SEC-01）。
-      const unauthenticated = await fetch(`http://${host}/`, { redirect: "manual" });
+      const unauthenticated = await fetch(`http://${host}/`, {
+        redirect: 'manual',
+      });
       await unauthenticated.body?.cancel();
       if (unauthenticated.status !== 401) {
-        throw new Error(`認証なしの GET / が ${unauthenticated.status} を返しました`);
+        throw new Error(
+          `認証なしの GET / が ${unauthenticated.status} を返しました`,
+        );
       }
-      const challenge = unauthenticated.headers.get("www-authenticate");
+      const challenge = unauthenticated.headers.get('www-authenticate');
       if (challenge !== 'Basic realm="power-manager"') {
         throw new Error(`WWW-Authenticate が不正でした: ${challenge}`);
       }
       // 誤った資格情報は 401（SEC-01）。常に通過する退化を検出する Canary。
       const wrongCredentials = btoa(`${smokeUsername}:wrong-password`);
       const wrongPassword = await fetch(`http://${host}/`, {
-        redirect: "manual",
+        redirect: 'manual',
         headers: { authorization: `Basic ${wrongCredentials}` },
       });
       await wrongPassword.body?.cancel();
       if (wrongPassword.status !== 401) {
-        throw new Error(`誤ったパスワードの GET / が ${wrongPassword.status} を返しました`);
+        throw new Error(
+          `誤ったパスワードの GET / が ${wrongPassword.status} を返しました`,
+        );
       }
       // Origin 不一致の POST は拒否される（SEC-03）。CSRF 検証の退化を検出する Canary。
       // 多重防御の第 1 段（React Router 内蔵の `allowedActionOrigins`）が先に動いて
       // 400 を返すため、第 2 段の csrf ミドルウェア（403）には通常到達しない。
       // どちらの段で拒否されても Canary としては成立する。
       const crossOrigin = await fetch(`http://${host}/`, {
-        method: "POST",
-        redirect: "manual",
+        method: 'POST',
+        redirect: 'manual',
         headers: {
           authorization: smokeAuthorization,
-          "content-type": "text/plain",
-          origin: "https://evil.example.ts.net",
+          'content-type': 'text/plain',
+          origin: 'https://evil.example.ts.net',
         },
       });
       await crossOrigin.body?.cancel();
       if (crossOrigin.status !== 403 && crossOrigin.status !== 400) {
-        throw new Error(`Origin 不一致の POST / が ${crossOrigin.status} を返しました`);
+        throw new Error(
+          `Origin 不一致の POST / が ${crossOrigin.status} を返しました`,
+        );
       }
       // `/healthz` は認証免除の死活監視（SEC-10）。
-      const healthz = await fetch(`http://${host}/healthz`, { redirect: "manual" });
+      const healthz = await fetch(`http://${host}/healthz`, {
+        redirect: 'manual',
+      });
       const healthzBody = await healthz.text();
-      if (healthz.status !== 200 || healthzBody !== "ok") {
-        throw new Error(`GET /healthz が ${healthz.status} (${healthzBody}) を返しました`);
+      if (healthz.status !== 200 || healthzBody !== 'ok') {
+        throw new Error(
+          `GET /healthz が ${healthz.status} (${healthzBody}) を返しました`,
+        );
       }
       const response = await fetch(`http://${host}/`, {
-        redirect: "manual",
+        redirect: 'manual',
         headers: { authorization: smokeAuthorization },
       });
       const body = await response.text();
-      if (response.status !== 200) throw new Error(`GET / が ${response.status} を返しました`);
-      if (!response.headers.get("content-type")?.includes("text/html")) {
-        throw new Error("GET / が HTML を返しませんでした");
+      if (response.status !== 200)
+        throw new Error(`GET / が ${response.status} を返しました`);
+      if (!response.headers.get('content-type')?.includes('text/html')) {
+        throw new Error('GET / が HTML を返しませんでした');
       }
-      if (!body.includes("power-manager")) {
-        throw new Error("GET / の HTML にアプリケーションの内容が含まれていません");
+      if (!body.includes('power-manager')) {
+        throw new Error(
+          'GET / の HTML にアプリケーションの内容が含まれていません',
+        );
       }
       // エラー画面ではなく一覧画面の出力が返っていること。`/` の loader は実行時設定を
       // `context.get` で読むため、キーが別実体になっていればここで 500 になる（r1a2 の再発防止）。
       // サーバー 0 台の設定でも見出しは出るため、見出しで判定する。
-      if (!body.includes("サーバー一覧")) {
-        throw new Error("GET / がルートの出力ではなくエラー画面を返しました");
+      if (!body.includes('サーバー一覧')) {
+        throw new Error('GET / がルートの出力ではなくエラー画面を返しました');
       }
-      if (body.includes("処理を完了できませんでした")) {
-        throw new Error("GET / がエラーバウンダリの画面を返しました");
+      if (body.includes('処理を完了できませんでした')) {
+        throw new Error('GET / がエラーバウンダリの画面を返しました');
       }
       return;
     } catch (error) {
@@ -231,8 +262,11 @@ async function waitForStarted() {
     }
   }
 
-  const detail = lastFailure instanceof Error ? lastFailure.message : String(lastFailure);
-  throw new Error(`待受後の最初の応答が不正でした: ${detail}\n${captured.stderr}`);
+  const detail =
+    lastFailure instanceof Error ? lastFailure.message : String(lastFailure);
+  throw new Error(
+    `待受後の最初の応答が不正でした: ${detail}\n${captured.stderr}`,
+  );
 }
 
 /**
@@ -253,13 +287,13 @@ function stopServer() {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       killQuietly(child);
-      reject(new Error("SIGTERM 後 10 秒以内に終了しませんでした"));
+      reject(new Error('SIGTERM 後 10 秒以内に終了しませんでした'));
     }, 10_000);
-    child.once("exit", (code, signal) => {
+    child.once('exit', (code, signal) => {
       clearTimeout(timer);
       resolve({ code, signal });
     });
-    child.kill("SIGTERM");
+    child.kill('SIGTERM');
   });
 }
 
@@ -281,15 +315,15 @@ async function checkConfigurationError() {
       // ポートは有効なまま、ユーザー名だけを空にして検証で止める。
       env: childEnvironment({
         POWER_MANAGER_PORT: String(unusedPort),
-        POWER_MANAGER_AUTH_USERNAME: "",
+        POWER_MANAGER_AUTH_USERNAME: '',
       }),
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     const invalidCaptured = capture(invalid);
 
     const timer = setTimeout(() => {
       killQuietly(invalid);
-      reject(new Error("不正な設定で起動が終了しませんでした"));
+      reject(new Error('不正な設定で起動が終了しませんでした'));
     }, invalidExitMilliseconds);
 
     const finish = (error) => {
@@ -299,22 +333,26 @@ async function checkConfigurationError() {
       else resolve();
     };
 
-    invalid.once("error", (error) => finish(error));
-    invalid.once("exit", (code) => {
+    invalid.once('error', (error) => finish(error));
+    invalid.once('exit', (code) => {
       void (async () => {
         if (code !== configurationErrorExitCode) {
           throw new Error(
             `不正な設定の終了コードが ${code} でした（期待値 ${configurationErrorExitCode}）`,
           );
         }
-        if (!invalidCaptured.stderr.includes('"code":"invalid_configuration"')) {
+        if (
+          !invalidCaptured.stderr.includes('"code":"invalid_configuration"')
+        ) {
           throw new Error(
             `startup_failed のログに invalid_configuration が含まれていません:\n${invalidCaptured.stderr}`,
           );
         }
         // 設定不備では待受を開始しない。started のログも出ない。
         if (invalidCaptured.stdout.includes('"event":"started"')) {
-          throw new Error(`不正な設定なのに started を出力しました:\n${invalidCaptured.stdout}`);
+          throw new Error(
+            `不正な設定なのに started を出力しました:\n${invalidCaptured.stdout}`,
+          );
         }
         try {
           await fetch(`http://${unusedHost}/`);
@@ -322,7 +360,9 @@ async function checkConfigurationError() {
           // 接続を拒否された = 待受を開始していない。
           return;
         }
-        throw new Error(`不正な設定で終了したのに ${unusedHost} が接続を受け付けました`);
+        throw new Error(
+          `不正な設定で終了したのに ${unusedHost} が接続を受け付けました`,
+        );
       })().then(finish, (error) => finish(error));
     });
   });
@@ -333,15 +373,21 @@ try {
   await checkStaysAlive();
   const { code } = await stopServer();
   if (code !== 0) {
-    throw new Error(`SIGTERM 後の終了コードが 0 ではありません: ${code}\n${captured.stderr}`);
+    throw new Error(
+      `SIGTERM 後の終了コードが 0 ではありません: ${code}\n${captured.stderr}`,
+    );
   }
   if (!captured.stdout.includes('"event":"started"')) {
-    throw new Error(`起動ログに started が含まれていません:\n${captured.stdout}`);
+    throw new Error(
+      `起動ログに started が含まれていません:\n${captured.stdout}`,
+    );
   }
   await checkConfigurationError();
-  console.log("smoke: ok");
+  console.log('smoke: ok');
 } catch (error) {
-  console.error(`smoke: failed\n${error instanceof Error ? error.message : String(error)}`);
+  console.error(
+    `smoke: failed\n${error instanceof Error ? error.message : String(error)}`,
+  );
   if (captured.stderr) console.error(captured.stderr);
   process.exitCode = 1;
 } finally {

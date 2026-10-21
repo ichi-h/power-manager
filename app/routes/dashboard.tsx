@@ -12,23 +12,33 @@
  * `fetcher.submit` で action を呼び、`fetcher.state` / `fetcher.data` をその行に出す
  * （FR-07）。ページ全体の再読み込みも URL の変更も起こさない（FR-14）。
  */
-import { useEffect, useRef, useState } from "react";
-import { useFetcher, type RouterContext } from "react-router";
+import { useEffect, useRef, useState } from 'react';
+import { useFetcher, type RouterContext } from 'react-router';
 
-import type { Route } from "./+types/dashboard";
-import { requireConfigStore } from "../lib/config-store.server.ts";
-import { requireHistory } from "../lib/history.server.ts";
-import type { ManagedConfig, PowerOperation, ServerState } from "../lib/model.ts";
-import { operatorContext } from "../lib/operator-context.server.ts";
-import type { PowerOperator, PowerOperationRecord } from "../lib/power.server.ts";
-import { requireSshRuntime } from "../lib/ssh-runtime-context.server.ts";
-import { requireStatusChecker, type StatusResponse } from "../lib/status-checker-context.ts";
+import type { Route } from './+types/dashboard';
+import { requireConfigStore } from '../lib/config-store.server.ts';
+import { requireHistory } from '../lib/history.server.ts';
+import type {
+  ManagedConfig,
+  PowerOperation,
+  ServerState,
+} from '../lib/model.ts';
+import { operatorContext } from '../lib/operator-context.server.ts';
+import type {
+  PowerOperator,
+  PowerOperationRecord,
+} from '../lib/power.server.ts';
+import { requireSshRuntime } from '../lib/ssh-runtime-context.server.ts';
+import {
+  requireStatusChecker,
+  type StatusResponse,
+} from '../lib/status-checker-context.ts';
 
 /** 状態の自動更新の間隔（FR-02）。15 秒固定で、外部から変える設定項目は持たない。 */
 export const statusRefreshIntervalMs = 15_000;
 
 export function meta(_args: Route.MetaArgs) {
-  return [{ title: "power-manager" }];
+  return [{ title: 'power-manager' }];
 }
 
 /**
@@ -44,7 +54,10 @@ export type DashboardLoaderData = {
     readonly name: string;
     readonly groups: ReadonlyArray<string>;
   }>;
-  readonly groups: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+  readonly groups: ReadonlyArray<{
+    readonly id: string;
+    readonly name: string;
+  }>;
   readonly states: Readonly<Record<string, ServerState>>;
   readonly recent: ReadonlyArray<PowerOperationRecord>;
 };
@@ -59,7 +72,9 @@ export type DashboardLoaderData = {
  * 死活状態の初期取得は「状態表示が `unknown` のまま残る時間」を短くするため loader で
  * 行う（FR-01）。取得は 5 秒上限・同時 8 の確認器を通すため、上限は NFR-07 に収まる。
  */
-export async function loader({ context }: Route.LoaderArgs): Promise<DashboardLoaderData> {
+export async function loader({
+  context,
+}: Route.LoaderArgs): Promise<DashboardLoaderData> {
   const config = requireConfigStore(context).current();
   const checker = requireStatusChecker(context);
   const states = await checker.checkAll(config.servers);
@@ -67,14 +82,19 @@ export async function loader({ context }: Route.LoaderArgs): Promise<DashboardLo
   return {
     ...toServerRows(config),
     states: Object.fromEntries(
-      config.servers.map((server) => [server.id, states.get(server.id) ?? "unknown"]),
+      config.servers.map((server) => [
+        server.id,
+        states.get(server.id) ?? 'unknown',
+      ]),
     ),
     recent: requireHistory(context).recent(),
   };
 }
 
 /** 定義から画面用の行データを作る。設定順序をそのまま保つ（FR-01）。 */
-function toServerRows(config: ManagedConfig): Pick<DashboardLoaderData, "servers" | "groups"> {
+function toServerRows(
+  config: ManagedConfig,
+): Pick<DashboardLoaderData, 'servers' | 'groups'> {
   return {
     servers: config.servers.map((server) => ({
       id: server.id,
@@ -91,12 +111,12 @@ function toServerRows(config: ManagedConfig): Pick<DashboardLoaderData, "servers
  * コマンド内容・認証情報・鍵情報・内部エラーの詳細は含めない（SEC-05）。
  */
 export type OperationResultKind =
-  | "succeeded"
-  | "failed"
+  | 'succeeded'
+  | 'failed'
   /** 実行中のため拒否した（`busy`）。 */
-  | "rejected"
+  | 'rejected'
   /** 一括操作で実行中の対象を飛ばした（`skipped`）。 */
-  | "skipped";
+  | 'skipped';
 
 export type OperationResult = {
   readonly target: string;
@@ -112,13 +132,13 @@ export type OperationResult = {
  * 「スキップ」「実行中（拒否）」と出し分ける（FR-07, FR-11）。
  */
 export function toResultKind(record: {
-  readonly result: PowerOperationRecord["result"];
-  readonly code: PowerOperationRecord["code"];
+  readonly result: PowerOperationRecord['result'];
+  readonly code: PowerOperationRecord['code'];
 }): OperationResultKind {
-  if (record.result === "succeeded") return "succeeded";
-  if (record.result === "skipped") return "skipped";
-  if (record.code === "busy") return "rejected";
-  return "failed";
+  if (record.result === 'succeeded') return 'succeeded';
+  if (record.result === 'skipped') return 'skipped';
+  if (record.code === 'busy') return 'rejected';
+  return 'failed';
 }
 
 /**
@@ -134,18 +154,18 @@ export function toResultKind(record: {
 export async function action({ request, context }: Route.ActionArgs) {
   const config = requireConfigStore(context).current();
   const form = await request.formData();
-  const intent = form.get("intent");
-  const target = form.get("target");
+  const intent = form.get('intent');
+  const target = form.get('target');
 
-  if (intent !== "wake" && intent !== "shutdown") return badRequest();
-  if (typeof target !== "string") return badRequest();
+  if (intent !== 'wake' && intent !== 'shutdown') return badRequest();
+  if (typeof target !== 'string') return badRequest();
 
   const server = config.servers.find((candidate) => candidate.id === target);
   if (server === undefined) return badRequest();
 
   const record = await requireOperator(context).operate(
     server.id,
-    { type: "server", id: server.id },
+    { type: 'server', id: server.id },
     intent,
     server,
     requireSshRuntime(context),
@@ -160,19 +180,19 @@ export async function action({ request, context }: Route.ActionArgs) {
   return new Response(JSON.stringify(body), {
     status: 200,
     headers: {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
     },
   });
 }
 
 /** 対象・種別が不正な要求。定義に無いサーバー ID もここに落とす。 */
 function badRequest(): Response {
-  return new Response(JSON.stringify({ error: "invalid_request" }), {
+  return new Response(JSON.stringify({ error: 'invalid_request' }), {
     status: 400,
     headers: {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
     },
   });
 }
@@ -183,7 +203,7 @@ function requireOperator(context: RouterContextProviderLike): PowerOperator {
     return context.get(operatorContext);
   } catch (cause) {
     throw new Error(
-      "電源操作器が load context にありません（server/app.ts の createLoadContext を経由していません）",
+      '電源操作器が load context にありません（server/app.ts の createLoadContext を経由していません）',
       { cause },
     );
   }
@@ -194,27 +214,27 @@ type RouterContextProviderLike = { get: <T>(key: RouterContext<T>) => T };
 
 /** 状態の表示文言（FR-03）。 */
 const stateLabels: Record<ServerState, string> = {
-  online: "オンライン",
-  offline: "オフライン",
-  unknown: "未取得",
+  online: 'オンライン',
+  offline: 'オフライン',
+  unknown: '未取得',
 };
 
 /** 結果の表示文言（FR-07）。種別と対象だけを出し、内部の理由は出さない。 */
 const resultLabels: Record<OperationResultKind, string> = {
-  succeeded: "成功",
-  failed: "失敗",
-  rejected: "実行中（拒否）",
-  skipped: "スキップ",
+  succeeded: '成功',
+  failed: '失敗',
+  rejected: '実行中（拒否）',
+  skipped: 'スキップ',
 };
 
 /** 操作の表示文言。 */
 const operationLabels: Record<PowerOperation, string> = {
-  wake: "起動",
-  shutdown: "停止",
+  wake: '起動',
+  shutdown: '停止',
 };
 
 /** 状態取得のリソースルートのパス（FR-02）。 */
-const statusPath = "/api/status";
+const statusPath = '/api/status';
 
 /**
  * 15 秒ごとに状態だけを更新する（FR-02）。
@@ -267,16 +287,16 @@ export function useStatusAutoRefresh(
     };
 
     const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") start();
+      if (document.visibilityState === 'visible') start();
       else stop();
     };
 
-    if (document.visibilityState !== "hidden") start();
-    document.addEventListener("visibilitychange", onVisibilityChange);
+    if (document.visibilityState !== 'hidden') start();
+    document.addEventListener('visibilitychange', onVisibilityChange);
 
     return () => {
       stop();
-      document.removeEventListener("visibilitychange", onVisibilityChange);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, []);
 
@@ -289,14 +309,16 @@ export function useStatusAutoRefresh(
  * 想定外の形（リバースプロキシのエラーページ等）では `null` を返し、表示を変えない。
  * 状態として解釈できない値も捨てる。
  */
-export function parseStatusResponse(value: unknown): Record<string, ServerState> | null {
-  if (typeof value !== "object" || value === null) return null;
+export function parseStatusResponse(
+  value: unknown,
+): Record<string, ServerState> | null {
+  if (typeof value !== 'object' || value === null) return null;
   const states = (value as Partial<StatusResponse>).states;
-  if (typeof states !== "object" || states === null) return null;
+  if (typeof states !== 'object' || states === null) return null;
 
   const parsed: Record<string, ServerState> = {};
   for (const [serverId, state] of Object.entries(states)) {
-    if (state === "online" || state === "offline" || state === "unknown") {
+    if (state === 'online' || state === 'offline' || state === 'unknown') {
       parsed[serverId] = state;
     }
   }
@@ -309,7 +331,7 @@ function OperationButton({
   operation,
   fetcher,
 }: {
-  server: DashboardLoaderData["servers"][number];
+  server: DashboardLoaderData['servers'][number];
   operation: PowerOperation;
   fetcher: { submit: (target: HTMLFormElement) => void };
 }) {
@@ -319,7 +341,10 @@ function OperationButton({
       onSubmit={(event) => {
         // 予約による停止は人間の確認を挟まない（`docs/security.md` 3.3）。この確認は
         // 「画面から人が押したとき」にだけ効く位置にあり、action や予約経路には入らない。
-        if (operation === "shutdown" && !window.confirm(`${server.name} を停止しますか`)) {
+        if (
+          operation === 'shutdown' &&
+          !window.confirm(`${server.name} を停止しますか`)
+        ) {
           event.preventDefault();
           return;
         }
@@ -345,25 +370,30 @@ function ServerRow({
   groupNames,
   state,
 }: {
-  server: DashboardLoaderData["servers"][number];
+  server: DashboardLoaderData['servers'][number];
   groupNames: ReadonlyArray<string>;
   state: ServerState;
 }) {
   const wakeFetcher = useFetcher<OperationResult>();
   const shutdownFetcher = useFetcher<OperationResult>();
 
-  const running = wakeFetcher.state !== "idle" || shutdownFetcher.state !== "idle";
+  const running =
+    wakeFetcher.state !== 'idle' || shutdownFetcher.state !== 'idle';
   const result = wakeFetcher.data ?? shutdownFetcher.data;
 
   return (
     <li>
       <span>{server.name}</span>
       <span>
-        所属グループ: {groupNames.length === 0 ? "なし" : groupNames.join("、")}
+        所属グループ: {groupNames.length === 0 ? 'なし' : groupNames.join('、')}
       </span>
       <span>状態: {stateLabels[state]}</span>
       <OperationButton server={server} operation="wake" fetcher={wakeFetcher} />
-      <OperationButton server={server} operation="shutdown" fetcher={shutdownFetcher} />
+      <OperationButton
+        server={server}
+        operation="shutdown"
+        fetcher={shutdownFetcher}
+      />
       {running ? <span role="status">実行中</span> : null}
       {running || result === undefined ? null : (
         <span role="status">
@@ -379,13 +409,14 @@ function RecentRow({ record }: { record: PowerOperationRecord }) {
   return (
     <li>
       <time dateTime={record.at}>{record.at}</time>
-      <span>予約: {record.scheduleId ?? "なし"}</span>
+      <span>予約: {record.scheduleId ?? 'なし'}</span>
       <span>
-        対象: {record.target.type === "server" ? "サーバー" : "グループ"} {record.target.id}
+        対象: {record.target.type === 'server' ? 'サーバー' : 'グループ'}{' '}
+        {record.target.id}
       </span>
       <span>操作: {operationLabels[record.operation]}</span>
       <span>結果: {resultLabels[toResultKind(record)]}</span>
-      <span>理由: {record.code ?? "なし"}</span>
+      <span>理由: {record.code ?? 'なし'}</span>
     </li>
   );
 }
@@ -393,7 +424,9 @@ function RecentRow({ record }: { record: PowerOperationRecord }) {
 export default function Dashboard({ loaderData }: Route.ComponentProps) {
   const statusFetcher = useFetcher<StatusResponse>();
   const states = useStatusAutoRefresh(loaderData.states, statusFetcher);
-  const groupNames = new Map(loaderData.groups.map((group) => [group.id, group.name]));
+  const groupNames = new Map(
+    loaderData.groups.map((group) => [group.id, group.name]),
+  );
 
   return (
     <section>
@@ -406,7 +439,7 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
             <ServerRow
               key={server.id}
               server={server}
-              state={states[server.id] ?? "unknown"}
+              state={states[server.id] ?? 'unknown'}
               groupNames={server.groups.map(
                 (groupId) => groupNames.get(groupId) ?? groupId,
               )}
@@ -420,7 +453,10 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
       ) : (
         <ul>
           {loaderData.recent.map((record) => (
-            <RecentRow key={`${record.at}:${record.target.type}:${record.target.id}`} record={record} />
+            <RecentRow
+              key={`${record.at}:${record.target.type}:${record.target.id}`}
+              record={record}
+            />
           ))}
         </ul>
       )}

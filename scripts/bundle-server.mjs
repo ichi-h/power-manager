@@ -15,29 +15,29 @@
  * `import.meta.url` からの相対パスで `../build/client` を解決するためである。配置後の
  * ディレクトリ構成を変えない。
  */
-import { build } from "esbuild";
-import { rm } from "node:fs/promises";
+import { build } from 'esbuild';
+import { rm } from 'node:fs/promises';
 
-const outfile = "server/index.js";
+const outfile = 'server/index.js';
 
 // 前回の成果物を消してから作る。生成物が残っていると、失敗時に古いバンドルで起動してしまう。
 await rm(outfile, { force: true });
 
 await build({
-  entryPoints: ["server/index.ts"],
+  entryPoints: ['server/index.ts'],
   outfile,
   bundle: true,
-  platform: "node",
-  format: "esm",
-  target: "node24",
+  platform: 'node',
+  format: 'esm',
+  target: 'node24',
   // `--conditions=react-router` で起動するため、解決条件を起動時と揃える。
-  conditions: ["react-router", "node", "import"],
-  packages: "external",
-  legalComments: "none",
+  conditions: ['react-router', 'node', 'import'],
+  packages: 'external',
+  legalComments: 'none',
   sourcemap: false,
-  logLevel: "warning",
+  logLevel: 'warning',
   banner: {
-    js: "// power-manager のサーバーエントリ。scripts/bundle-server.mjs が生成する。直接編集しない。",
+    js: '// power-manager のサーバーエントリ。scripts/bundle-server.mjs が生成する。直接編集しない。',
   },
 });
 

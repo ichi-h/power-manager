@@ -10,10 +10,10 @@
  * （`app/lib/power.server.ts`）へは型だけ依存する。実体は `server/app.ts` が
  * `createStatusChecker()` で作り、`context.set(statusCheckerContext, ...)` で載せる。
  */
-import { createContext, type RouterContext } from "react-router";
+import { createContext, type RouterContext } from 'react-router';
 
-import type { ServerState } from "./model.ts";
-import type { StatusChecker } from "./power.server.ts";
+import type { ServerState } from './model.ts';
+import type { StatusChecker } from './power.server.ts';
 
 /**
  * `GET /api/status` の応答。サーバー ID → 状態の対応。
@@ -31,13 +31,14 @@ export type StatusResponse = {
  * モジュールグラフになるため、モジュールスコープでキーを作ると実体が 2 つになり、
  * loader 側の `context.get` が失敗する。
  */
-const statusCheckerContextSlot = "__powerManagerStatusCheckerContext";
+const statusCheckerContextSlot = '__powerManagerStatusCheckerContext';
 
 type StatusCheckerContextRegistry = {
   [statusCheckerContextSlot]?: RouterContext<StatusChecker>;
 };
 
-const statusCheckerContextRegistry = globalThis as unknown as StatusCheckerContextRegistry;
+const statusCheckerContextRegistry =
+  globalThis as unknown as StatusCheckerContextRegistry;
 
 /**
  * 死活確認器の load context キー。`server/app.ts` が実体を設定する。
@@ -46,10 +47,9 @@ const statusCheckerContextRegistry = globalThis as unknown as StatusCheckerConte
  * すると client ビルドからも依存が見えて、React Router の server-code 削除の対象から
  * 外れる。
  */
-export const statusCheckerContext: RouterContext<StatusChecker> = (
-  statusCheckerContextRegistry[statusCheckerContextSlot] ??=
-    createContext<StatusChecker>()
-);
+export const statusCheckerContext: RouterContext<StatusChecker> =
+  (statusCheckerContextRegistry[statusCheckerContextSlot] ??=
+    createContext<StatusChecker>());
 
 /** `RouterContextProvider` のうち `requireStatusChecker` が使う部分。テストで差し替えられるようにする。 */
 type RouterContextProviderLike = { get: <T>(key: RouterContext<T>) => T };
@@ -67,7 +67,7 @@ export function requireStatusChecker(
     return context.get(statusCheckerContext);
   } catch (cause) {
     throw new Error(
-      "死活確認器が load context にありません（server/app.ts の createLoadContext を経由していません）",
+      '死活確認器が load context にありません（server/app.ts の createLoadContext を経由していません）',
       { cause },
     );
   }

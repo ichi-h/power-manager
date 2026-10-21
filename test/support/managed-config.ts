@@ -9,33 +9,35 @@ export function validManagedConfig(): Record<string, unknown> {
     version: 2,
     servers: [
       {
-        id: "nas",
-        name: "NAS",
-        groups: ["storage"],
-        macAddress: "00:11:22:33:44:55",
-        wol: { broadcastAddress: "192.168.1.255", port: 9 },
+        id: 'nas',
+        name: 'NAS',
+        groups: ['storage'],
+        macAddress: '00:11:22:33:44:55',
+        wol: { broadcastAddress: '192.168.1.255', port: 9 },
         ssh: {
-          host: "nas.example.internal",
+          host: 'nas.example.internal',
           port: 22,
-          user: "power-manager",
-          shutdownCommand: "sudo systemctl poweroff",
+          user: 'power-manager',
+          shutdownCommand: 'sudo systemctl poweroff',
         },
       },
     ],
-    groups: [{ id: "storage", name: "ストレージ" }],
+    groups: [{ id: 'storage', name: 'ストレージ' }],
     schedules: [] as unknown[],
   };
 }
 
 /** 検証を通る予約 1 件。対象と繰り返しだけ差し替えて使う。 */
-export function validSchedule(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+export function validSchedule(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
   return {
-    id: "night-shutdown",
-    name: "夜間停止",
+    id: 'night-shutdown',
+    name: '夜間停止',
     enabled: true,
-    target: { type: "group", id: "storage" },
-    operation: "shutdown",
-    repeat: { kind: "daily", time: "23:30" },
+    target: { type: 'group', id: 'storage' },
+    operation: 'shutdown',
+    repeat: { kind: 'daily', time: '23:30' },
     ...overrides,
   };
 }

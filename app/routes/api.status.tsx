@@ -13,12 +13,11 @@
  * `app/lib/status-checker-context.ts` が持ち、実体は `server/app.ts`（server-only）が
  * `createStatusChecker()` で作る。
  */
-import { requireConfigStore } from "../lib/config-store.server.ts";
-import type { ServerState } from "../lib/model.ts";
+import { requireConfigStore } from '../lib/config-store.server.ts';
 import {
   requireStatusChecker,
   type StatusResponse,
-} from "../lib/status-checker-context.ts";
+} from '../lib/status-checker-context.ts';
 
 export async function loader({
   context,
@@ -32,7 +31,7 @@ export async function loader({
     states: Object.fromEntries(
       config.servers.map((server) => [
         server.id,
-        states.get(server.id) ?? "unknown",
+        states.get(server.id) ?? 'unknown',
       ]),
     ),
   };
@@ -40,9 +39,9 @@ export async function loader({
   return new Response(JSON.stringify(body), {
     status: 200,
     headers: {
-      "content-type": "application/json; charset=utf-8",
+      'content-type': 'application/json; charset=utf-8',
       // 状態は確認ごとに変わるため、クライアント・中間でのキャッシュを許さない。
-      "cache-control": "no-store",
+      'cache-control': 'no-store',
     },
   });
 }

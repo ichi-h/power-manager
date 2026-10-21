@@ -1,15 +1,15 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 
 import {
   createConfigStore,
   loadManagedConfigForStartup,
-} from "../app/lib/config-store.server.ts";
+} from '../app/lib/config-store.server.ts';
 
-import { validManagedConfig, validSchedule } from "./support/managed-config.ts";
+import { validManagedConfig, validSchedule } from './support/managed-config.ts';
 
 /**
  * 設定ストアは「読み込む → 検証する → 成功時だけ差し替える」の順序が仕様である
@@ -27,8 +27,8 @@ let directory: string;
 let configPath: string;
 
 beforeEach(async () => {
-  directory = await mkdtemp(path.join(tmpdir(), "power-manager-config-"));
-  configPath = path.join(directory, "config.json");
+  directory = await mkdtemp(path.join(tmpdir(), 'power-manager-config-'));
+  configPath = path.join(directory, 'config.json');
   await writeFile(configPath, JSON.stringify(validManagedConfig()));
 });
 
@@ -42,34 +42,39 @@ async function store() {
   return createConfigStore(configPath, initial);
 }
 
-describe("起動時の読込み", () => {
-  test("検証済みの設定を返す", async () => {
+describe('起動時の読込み', () => {
+  test('検証済みの設定を返す', async () => {
     const config = await loadManagedConfigForStartup(configPath);
 
     expect(config.version).toBe(2);
-    expect(config.servers[0]?.id).toBe("nas");
+    expect(config.servers[0]?.id).toBe('nas');
   });
 
-  test("BOM 付きのファイルも読める", async () => {
-    await writeFile(configPath, `\uFEFF${JSON.stringify(validManagedConfig())}`);
-
-    await expect(loadManagedConfigForStartup(configPath)).resolves.toMatchObject({ version: 2 });
-  });
-
-  test("存在しないファイルは「見つかりません」として拒否する", async () => {
-    await expect(loadManagedConfigForStartup(path.join(directory, "missing.json"))).rejects.toThrow(
-      /設定ファイルが見つかりません/,
+  test('BOM 付きのファイルも読める', async () => {
+    await writeFile(
+      configPath,
+      `\uFEFF${JSON.stringify(validManagedConfig())}`,
     );
+
+    await expect(
+      loadManagedConfigForStartup(configPath),
+    ).resolves.toMatchObject({ version: 2 });
   });
 
-  test("ディレクトリを指した場合は読取り失敗として拒否する", async () => {
+  test('存在しないファイルは「見つかりません」として拒否する', async () => {
+    await expect(
+      loadManagedConfigForStartup(path.join(directory, 'missing.json')),
+    ).rejects.toThrow(/設定ファイルが見つかりません/);
+  });
+
+  test('ディレクトリを指した場合は読取り失敗として拒否する', async () => {
     await expect(loadManagedConfigForStartup(directory)).rejects.toThrow(
       /設定ファイルを読み取れませんでした/,
     );
   });
 
-  test("JSON として壊れたファイルは位置情報を出さずに拒否する", async () => {
-    await writeFile(configPath, "{ version: 2 ");
+  test('JSON として壊れたファイルは位置情報を出さずに拒否する', async () => {
+    await writeFile(configPath, '{ version: 2 ');
 
     // JSON.parse のメッセージには入力の断片が入るため、そのままログへ流さない。
     await expect(loadManagedConfigForStartup(configPath)).rejects.toThrow(
@@ -78,60 +83,66 @@ describe("起動時の読込み", () => {
   });
 });
 
-describe("再読込", () => {
-  test("成功時は新しい定義に差し替える", async () => {
+describe('再読込', () => {
+  test('成功時は新しい定義に差し替える', async () => {
     const configStore = await store();
     const before = configStore.current();
 
     const changed = validManagedConfig();
-    (changed.servers as Record<string, unknown>[])[0]!.name = "NAS（新しい名前）";
+    (changed.servers as Record<string, unknown>[])[0]!.name =
+      'NAS（新しい名前）';
     await writeFile(configPath, JSON.stringify(changed));
 
     const result = await configStore.reload();
 
     expect(result.ok).toBe(true);
-    expect(configStore.current().servers[0]?.name).toBe("NAS（新しい名前）");
+    expect(configStore.current().servers[0]?.name).toBe('NAS（新しい名前）');
     // 差し替えは新しいオブジェクトで行う（同じ実体を書き換えない）。
     expect(configStore.current()).not.toBe(before);
   });
 
-  test("失敗時は旧設定を維持し、理由を返す（原子性）", async () => {
+  test('失敗時は旧設定を維持し、理由を返す（原子性）', async () => {
     const configStore = await store();
     const before = configStore.current();
     const snapshot = structuredClone(before);
 
-    await writeFile(configPath, JSON.stringify({ ...validManagedConfig(), version: 1 }));
+    await writeFile(
+      configPath,
+      JSON.stringify({ ...validManagedConfig(), version: 1 }),
+    );
     const result = await configStore.reload();
 
     expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("unreachable");
-    expect(result.reason).toContain("version");
+    if (result.ok) throw new Error('unreachable');
+    expect(result.reason).toContain('version');
     expect(result.issues.length).toBeGreaterThan(0);
     // 同一オブジェクトが残っている = 一部だけ反映された状態が無い。
     expect(configStore.current()).toBe(before);
     expect(configStore.current()).toEqual(snapshot);
   });
 
-  test("相互参照の失敗でも旧設定を維持する", async () => {
+  test('相互参照の失敗でも旧設定を維持する', async () => {
     const configStore = await store();
     const before = configStore.current();
     const snapshot = structuredClone(before);
 
     const broken = validManagedConfig();
-    (broken.schedules as unknown[]).push(validSchedule({ target: { type: "group", id: "missing" } }));
+    (broken.schedules as unknown[]).push(
+      validSchedule({ target: { type: 'group', id: 'missing' } }),
+    );
     await writeFile(configPath, JSON.stringify(broken));
 
     const result = await configStore.reload();
 
     expect(result.ok).toBe(false);
-    expect(result.ok === false && result.issues.join(" ")).toContain(
-      "group missing が定義されていません",
+    expect(result.ok === false && result.issues.join(' ')).toContain(
+      'group missing が定義されていません',
     );
     expect(configStore.current()).toBe(before);
     expect(configStore.current()).toEqual(snapshot);
   });
 
-  test("ファイルが消えた場合も旧設定を維持する", async () => {
+  test('ファイルが消えた場合も旧設定を維持する', async () => {
     const configStore = await store();
     const before = configStore.current();
     const snapshot = structuredClone(before);
@@ -140,17 +151,17 @@ describe("再読込", () => {
     const result = await configStore.reload();
 
     expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("unreachable");
-    expect(result.reason).toContain("設定ファイルが見つかりません");
+    if (result.ok) throw new Error('unreachable');
+    expect(result.reason).toContain('設定ファイルが見つかりません');
     expect(configStore.current()).toBe(before);
     expect(configStore.current()).toEqual(snapshot);
   });
 
-  test("JSON が壊れていても旧設定を維持する", async () => {
+  test('JSON が壊れていても旧設定を維持する', async () => {
     const configStore = await store();
     const before = configStore.current();
     const snapshot = structuredClone(before);
-    await writeFile(configPath, "not json");
+    await writeFile(configPath, 'not json');
 
     const result = await configStore.reload();
 
@@ -159,42 +170,45 @@ describe("再読込", () => {
     expect(configStore.current()).toEqual(snapshot);
   });
 
-  test("失敗のあとに成功すれば差し替わる（旧設定は維持され続けない）", async () => {
+  test('失敗のあとに成功すれば差し替わる（旧設定は維持され続けない）', async () => {
     const configStore = await store();
 
-    await writeFile(configPath, "not json");
+    await writeFile(configPath, 'not json');
     expect((await configStore.reload()).ok).toBe(false);
 
     const changed = validManagedConfig();
-    (changed.groups as Record<string, unknown>[])[0]!.name = "新しいグループ名";
+    (changed.groups as Record<string, unknown>[])[0]!.name = '新しいグループ名';
     await writeFile(configPath, JSON.stringify(changed));
 
     const result = await configStore.reload();
     expect(result.ok).toBe(true);
-    expect(configStore.current().groups[0]?.name).toBe("新しいグループ名");
+    expect(configStore.current().groups[0]?.name).toBe('新しいグループ名');
   });
 
-  test("同梱の開発用の設定例（dev/config.json）を通す", async () => {
-    const devConfig = path.resolve("dev/config.json");
+  test('同梱の開発用の設定例（dev/config.json）を通す', async () => {
+    const devConfig = path.resolve('dev/config.json');
 
     const config = await loadManagedConfigForStartup(devConfig);
 
     // p001 で README に載せる例そのものが検証を通ることを、ここで固定しておく。
-    expect(config.servers.map((server) => server.id)).toEqual(["nas", "test-01"]);
+    expect(config.servers.map((server) => server.id)).toEqual([
+      'nas',
+      'test-01',
+    ]);
     expect(config.schedules.map((schedule) => schedule.id)).toEqual([
-      "test-night-shutdown",
-      "storage-morning-wake",
+      'test-night-shutdown',
+      'storage-morning-wake',
     ]);
   });
 
-  test("再読込は渡された設定のパスを読み直す", async () => {
+  test('再読込は渡された設定のパスを読み直す', async () => {
     const initial = await loadManagedConfigForStartup(configPath);
     const passedPaths: string[] = [];
     // 注入した load が検証済みの値をそのまま返すと、検証の有無を確かめられない。
     // ここでは「どのパスを読みに行くか」だけを固定する。
     const isolated = createConfigStore(configPath, initial, async (path) => {
       passedPaths.push(path);
-      throw new Error("読み込み失敗");
+      throw new Error('読み込み失敗');
     });
 
     const result = await isolated.reload();

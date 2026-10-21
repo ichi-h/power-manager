@@ -11,25 +11,33 @@
  */
 
 /** 電源操作の種別（FR-04, FR-05）。 */
-export const powerOperations = ["wake", "shutdown"] as const;
+export const powerOperations = ['wake', 'shutdown'] as const;
 
 /** 電源操作の種別。 */
 export type PowerOperation = (typeof powerOperations)[number];
 
 /** 曜日（FR-12）。`days` の重複・空配列は検証で拒否する。 */
-export const weekdays = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
+export const weekdays = [
+  'mon',
+  'tue',
+  'wed',
+  'thu',
+  'fri',
+  'sat',
+  'sun',
+] as const;
 
 /** 曜日。 */
 export type Weekday = (typeof weekdays)[number];
 
 /** サーバーの死活状態（FR-03）。未取得の初期値は `unknown`。 */
-export const serverStates = ["online", "offline", "unknown"] as const;
+export const serverStates = ['online', 'offline', 'unknown'] as const;
 
 /** サーバーの死活状態（FR-03）。 */
 export type ServerState = (typeof serverStates)[number];
 
 /** 操作対象の種別（FR-12）。 */
-export const targetTypes = ["server", "group"] as const;
+export const targetTypes = ['server', 'group'] as const;
 
 /** 操作対象の種別。 */
 export type TargetType = (typeof targetTypes)[number];
@@ -42,11 +50,11 @@ export type TargetType = (typeof targetTypes)[number];
  * 後に相互参照検証で確かめる。
  */
 export type Target =
-  | { readonly type: "server"; readonly id: string }
-  | { readonly type: "group"; readonly id: string };
+  | { readonly type: 'server'; readonly id: string }
+  | { readonly type: 'group'; readonly id: string };
 
 /** 繰り返しの種別（FR-12）。 */
-export const repeatKinds = ["daily", "weekly"] as const;
+export const repeatKinds = ['daily', 'weekly'] as const;
 
 /** 繰り返しの種別。 */
 export type RepeatKind = (typeof repeatKinds)[number];
@@ -56,8 +64,12 @@ export type RepeatKind = (typeof repeatKinds)[number];
  * `weekly` だけが `days` を持つ。
  */
 export type Repeat =
-  | { readonly kind: "daily"; readonly time: string }
-  | { readonly kind: "weekly"; readonly days: readonly Weekday[]; readonly time: string };
+  | { readonly kind: 'daily'; readonly time: string }
+  | {
+      readonly kind: 'weekly';
+      readonly days: readonly Weekday[];
+      readonly time: string;
+    };
 
 /**
  * Wake-on-LAN の送信先。
