@@ -25,6 +25,7 @@ import type {
 } from '../lib/model.ts';
 import { operatorContext } from '../lib/operator-context.server.ts';
 import type {
+  PowerOperationCode,
   PowerOperator,
   PowerOperationRecord,
 } from '../lib/power.server.ts';
@@ -236,6 +237,36 @@ const operationLabels: Record<PowerOperation, string> = {
   wake: '起動',
   shutdown: '停止',
 };
+
+/**
+ * 「最近の実行」に出す理由の表示文言（FR-13, SEC-05）。
+ *
+ * リングバッファが持つ分類（`PowerOperationCode`）は内部の語彙であり、英語の識別子を
+ * 利用者向けの文言として出さない（`docs/security.md` 4.3）。理由を出すのは
+ * 実行しなかった（`skipped`）場合に限る。運用者の操作で失敗した理由はログにのみ残す。
+ */
+const skipReasonLabels: Record<PowerOperationCode, string> = {
+  busy: '実行中のためスキップしました',
+  missed_schedule: '実行時刻を過ぎたためスキップしました',
+  invalid_configuration: '設定が不正なため実行しませんでした',
+  ssh_unavailable: '対象に接続できません',
+  operation_failed: '操作に失敗しました',
+};
+
+/**
+ * 理由欄の文言を引く。`skipped` 以外と未知の分類では理由を出さない（`null`）。
+ *
+ * 未知の分類をそのまま出さないのは、分類を増やしたときに内部語彙が画面へ漏れるのを
+ * 防ぐためである。
+ */
+export function toReasonLabel(record: {
+  readonly result: PowerOperationRecord['result'];
+  readonly code: PowerOperationRecord['code'];
+}): string | null {
+  if (record.result !== 'skipped') return null;
+  if (record.code === null) return null;
+  return skipReasonLabels[record.code] ?? null;
+}
 
 /** 状態取得のリソースルートのパス（FR-02）。 */
 const statusPath = '/api/status';
@@ -453,6 +484,8 @@ function ServerRow({
 
 /** 「最近の実行」の 1 行（FR-13）。表示は実行時刻・予約 ID・対象・操作・結果・理由に限る。 */
 function RecentRow({ record }: { record: PowerOperationRecord }) {
+  const reason = toReasonLabel(record);
+
   return (
     <li>
       <time dateTime={record.at}>{record.at}</time>
@@ -463,7 +496,8 @@ function RecentRow({ record }: { record: PowerOperationRecord }) {
       </span>
       <span>操作: {operationLabels[record.operation]}</span>
       <span>結果: {resultLabels[toResultKind(record)]}</span>
-      <span>理由: {record.code ?? 'なし'}</span>
+      {/* 内部の分類名は出さない。出すのは実行しなかった理由だけである（SEC-05）。 */}
+      {reason === null ? null : <span>理由: {reason}</span>}
     </li>
   );
 }

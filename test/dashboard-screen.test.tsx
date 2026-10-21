@@ -182,8 +182,8 @@ describe('一覧画面の描画', () => {
     expect(screen.getByText('操作: 停止')).toBeDefined();
     expect(screen.getByText('操作: 起動')).toBeDefined();
     expect(screen.getByText('結果: 失敗')).toBeDefined();
-    expect(screen.getByText('理由: operation_failed')).toBeDefined();
-    expect(screen.getByText('理由: なし')).toBeDefined();
+    // 失敗理由はログにのみ残し、画面には出さない（FR-13, SEC-05）。
+    expect(screen.queryByText(/理由:/)).toBeNull();
   });
 
   test('「最近の実行」が空のときはその旨を出す', async () => {
@@ -479,12 +479,10 @@ describe('再現（b356 で見つかった欠陥）', () => {
       }),
     );
 
-    expect(await screen.findByText('理由: 操作に失敗しました')).toBeDefined();
-    expect(screen.getByText('理由: 対象に接続できません')).toBeDefined();
     expect(
-      screen.getByText('理由: 実行中のためスキップしました'),
+      await screen.findByText('理由: 実行中のためスキップしました'),
     ).toBeDefined();
-    // 成功時・未知の分類では理由を出さない。
+    // 実行して失敗した操作の理由と、成功時の理由は出さない。
     expect(
       screen.queryByText(/operation_failed|ssh_unavailable|busy/),
     ).toBeNull();

@@ -23,7 +23,12 @@ import type {
 } from '../app/lib/power.server.ts';
 import { sshRuntimeContext } from '../app/lib/ssh-runtime-context.server.ts';
 import { statusCheckerContext } from '../app/lib/status-checker-context.ts';
-import { action, loader, toResultKind } from '../app/routes/dashboard.tsx';
+import {
+  action,
+  loader,
+  toReasonLabel,
+  toResultKind,
+} from '../app/routes/dashboard.tsx';
 
 import { validManagedConfig } from './support/managed-config.ts';
 
@@ -237,5 +242,33 @@ describe('一覧画面の action', () => {
       'failed',
     );
     expect(toResultKind({ result: 'succeeded', code: null })).toBe('succeeded');
+  });
+});
+
+describe('「最近の実行」の理由表示', () => {
+  test('実行しなかった理由だけを日本語で返す', () => {
+    expect(toReasonLabel({ result: 'skipped', code: 'busy' })).toBe(
+      '実行中のためスキップしました',
+    );
+    expect(toReasonLabel({ result: 'skipped', code: 'missed_schedule' })).toBe(
+      '実行時刻を過ぎたためスキップしました',
+    );
+  });
+
+  test('実行して失敗した操作の理由は出さない（ログにのみ残す）', () => {
+    for (const code of [
+      'invalid_configuration',
+      'ssh_unavailable',
+      'operation_failed',
+    ] as const) {
+      expect(toReasonLabel({ result: 'failed', code })).toBeNull();
+    }
+    expect(toReasonLabel({ result: 'succeeded', code: null })).toBeNull();
+  });
+
+  test('未知の分類は表示しない', () => {
+    expect(
+      toReasonLabel({ result: 'skipped', code: 'unknown_code' as never }),
+    ).toBeNull();
   });
 });
