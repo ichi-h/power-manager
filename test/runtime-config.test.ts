@@ -45,6 +45,21 @@ describe("設定 JSON のスキーマ", () => {
     expect(server?.ssh.port).toBe(22);
   });
 
+  test("3 つの集合が空でも受理する（servers の空は仕様）", () => {
+    // `servers` を空にできるのは全サーバー削除が利用者の判断だからである（仕様）。
+    // `.min(1)` を後から足しても気付けるよう、空配列の受理をここで固定する。
+    const config = parseManagedConfig({
+      version: 2,
+      servers: [],
+      groups: [],
+      schedules: [],
+    });
+
+    expect(config.servers).toEqual([]);
+    expect(config.groups).toEqual([]);
+    expect(config.schedules).toEqual([]);
+  });
+
   test("wol を空オブジェクトで指定しても既定値になる", () => {
     const input = validConfig();
     (input.servers as Record<string, unknown>[])[0]!.wol = {};
