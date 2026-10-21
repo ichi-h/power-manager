@@ -1,6 +1,26 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import { loadRuntimeConfig } from "../app/lib/config.server.ts";
+/**
+ * `startRuntime` は終了直前の 1 行を `fs.writeSync(2, ...)` で書く（`console.error` だと
+ * `process.exit` に追い越されるため）。`process.stderr.write` を spy しても捕まえられない
+ * ので、`writeSync` 自体を差し替える。
+ */
+const writtenToStderr = vi.hoisted(() => [] as string[]);
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    writeSync: (fd: number, data: string) => {
+      if (fd === 2) writtenToStderr.push(data);
+      return data.length;
+    },
+  };
+});
+
+import { ConfigurationError, loadRuntimeConfig } from "../app/lib/config.server.ts";
+import { configurationErrorExitCode } from "../app/lib/exit-codes.ts";
+import { startRuntime } from "../server/startup.ts";
 
 import { validEnvironment } from "./support/environment.ts";
 
@@ -32,7 +52,8 @@ describe("起動要件", () => {
 
   test("PATH に ssh が無くても起動検証を通す", () => {
     const originalPath = process.env.PATH;
-    process.env.PATH = "/nonexistent/bin";
+    // `= undefined` は文字列 "undefined" になるため `delete` で消す。
+    delete process.env.PATH;
     try {
       const runtime = loadRuntimeConfig(
         environmentWith({
@@ -44,7 +65,86 @@ describe("起動要件", () => {
       // 起動要件に ssh の存在確認を含めない。不在は停止操作時に ssh_unavailable として扱う。
       expect(runtime.port).toBe(8080);
     } finally {
-      process.env.PATH = originalPath;
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
     }
+  });
+
+  test("PATH に ssh が無くても startRuntime が待受可能な設定を返す", () => {
+    const originalPath = process.env.PATH;
+    delete process.env.PATH;
+    try {
+      const exit = vi.fn();
+      const runtime = startRuntime(validEnvironment(), exit);
+
+      expect(exit).not.toHaveBeenCalled();
+      expect(runtime.port).toBe(8080);
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+    }
+  });
+});
+
+describe("startRuntime", () => {
+  let stderr: string[];
+
+  beforeEach(() => {
+    writtenToStderr.length = 0;
+    stderr = writtenToStderr;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("検証を通れば終了せずに設定を返す", () => {
+    const exit = vi.fn();
+
+    const runtime = startRuntime(validEnvironment(), exit);
+
+    expect(exit).not.toHaveBeenCalled();
+    expect(runtime.publicOrigin).toBe("https://power.example.ts.net");
+    expect(stderr).toEqual([]);
+  });
+
+  test("設定不備では終了コード 78 で終了し、startup_failed を 1 行だけ出す", () => {
+    const exit = vi.fn();
+
+    expect(() => startRuntime({ ...validEnvironment(), POWER_MANAGER_PORT: "abc" }, exit)).toThrow(
+      ConfigurationError,
+    );
+
+    expect(exit).toHaveBeenCalledWith(configurationErrorExitCode);
+    expect(stderr).toHaveLength(1);
+    const line = stderr[0] ?? "";
+    expect(line.endsWith("\n")).toBe(true);
+    expect(JSON.parse(line)).toMatchObject({
+      event: "startup_failed",
+      code: "invalid_configuration",
+    });
+  });
+
+  test("設定不備以外の例外は再送出し、終了しない", () => {
+    const exit = vi.fn();
+
+    // 環境変数が `undefined` のオブジェクトではなく `null` を渡すと、想定外の例外になる。
+    expect(() => startRuntime(null as never, exit)).toThrow();
+    expect(exit).not.toHaveBeenCalled();
+    expect(stderr).toEqual([]);
+  });
+
+  test("startup_failed の reason に環境変数の値を混ぜない", () => {
+    const exit = vi.fn();
+    const secret = "super-secret-password-hash";
+
+    try {
+      startRuntime({ ...validEnvironment(), POWER_MANAGER_AUTH_PASSWORD_HASH: secret }, exit);
+    } catch {
+      // 終了コードはここでは見ない。
+    }
+
+    expect(stderr.join("")).not.toContain(secret);
+    expect(stderr.join("")).toContain("POWER_MANAGER_AUTH_PASSWORD_HASH");
   });
 });

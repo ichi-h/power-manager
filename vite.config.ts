@@ -11,5 +11,20 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["test/**/*.test.{ts,tsx}"],
+    /**
+     * カバレッジは `npm run coverage`（CI も同じ）で計測する。
+     *
+     * 閾値は網羅率そのものを目的にせず、低下の検出だけを狙って現状より少し下に置く。
+     * `server/index.ts` と `server/static.ts`、画面コンポーネントは子プロセス起動を伴う
+     * `npm run smoke` でしか通らないため、ユニットテストの網羅率には現れない。
+     * 上回るために意味のない assert を書くより、検証したい振る舞いを優先する。
+     */
+    coverage: {
+      provider: "v8",
+      reporter: ["text"],
+      include: ["app/**/*.{ts,tsx}", "server/**/*.ts"],
+      exclude: ["app/**/*.d.ts"],
+      thresholds: { statements: 60, branches: 65, functions: 60, lines: 60 },
+    },
   },
 });

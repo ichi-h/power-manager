@@ -320,6 +320,77 @@ describe("空白", () => {
   });
 });
 
+describe("NODE_ENV", () => {
+  test.each(["production", "development", "test"])(
+    "許可値 %s を受け付ける",
+    (value) => {
+      expect(
+        loadRuntimeConfig({
+          ...validEnvironment(),
+          NODE_ENV: value,
+          POWER_MANAGER_PUBLIC_ORIGIN:
+            value === "production" ? "https://power.example.ts.net" : "http://localhost:5173",
+        }).nodeEnv,
+      ).toBe(value);
+    },
+  );
+
+  test.each(["staging", "Production", "prod", "", " development"])(
+    "許可値以外の %j を拒否する",
+    (value) => {
+      expect(() => loadRuntimeConfig({ ...validEnvironment(), NODE_ENV: value })).toThrow(
+        /NODE_ENV/,
+      );
+    },
+  );
+
+  test("NODE_ENV を省略すると production として扱う", () => {
+    const environment = validEnvironment();
+    delete environment.NODE_ENV;
+
+    expect(loadRuntimeConfig(environment).nodeEnv).toBe("production");
+  });
+
+  test("NODE_ENV=production では HTTP の Origin を拒否し、それ以外では受容する", () => {
+    expect(() =>
+      loadRuntimeConfig({
+        ...validEnvironment(),
+        NODE_ENV: "production",
+        POWER_MANAGER_PUBLIC_ORIGIN: "http://localhost:5173",
+      }),
+    ).toThrow(/POWER_MANAGER_PUBLIC_ORIGIN/);
+
+    expect(
+      loadRuntimeConfig({
+        ...validEnvironment(),
+        NODE_ENV: "development",
+        POWER_MANAGER_PUBLIC_ORIGIN: "http://localhost:5173",
+      }).publicOrigin,
+    ).toBe("http://localhost:5173");
+  });
+});
+
+describe("秘密値", () => {
+  test.each([
+    "POWER_MANAGER_AUTH_PASSWORD_HASH",
+    "POWER_MANAGER_SSH_IDENTITY_FILE",
+    "POWER_MANAGER_SSH_KNOWN_HOSTS_FILE",
+    "POWER_MANAGER_CONFIG_PATH",
+  ])("%s の値を検証エラーメッセージに含めない", (name) => {
+    // 変数名は伝えるが、指定された値（秘密やローカルのパス）は伝えない。
+    expect(() => loadRuntimeConfig({ ...validEnvironment(), [name]: "leaked-value" })).toThrow(
+      expect.objectContaining({
+        message: expect.stringContaining(name),
+      }),
+    );
+    expect(() => loadRuntimeConfig({ ...validEnvironment(), [name]: "leaked-value" })).toThrow(
+      expect.objectContaining({
+        message: expect.not.stringContaining("leaked-value"),
+      }),
+    );
+  });
+});
+
 describe("未知の環境変数", () => {
   test("検証対象外の変数を無視する", () => {
     const runtime = loadRuntimeConfig({
