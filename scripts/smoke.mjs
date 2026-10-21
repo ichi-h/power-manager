@@ -169,6 +169,33 @@ async function waitForStarted() {
       if (challenge !== 'Basic realm="power-manager"') {
         throw new Error(`WWW-Authenticate が不正でした: ${challenge}`);
       }
+      // 誤った資格情報は 401（SEC-01）。常に通過する退化を検出する Canary。
+      const wrongCredentials = btoa(`${smokeUsername}:wrong-password`);
+      const wrongPassword = await fetch(`http://${host}/`, {
+        redirect: "manual",
+        headers: { authorization: `Basic ${wrongCredentials}` },
+      });
+      await wrongPassword.body?.cancel();
+      if (wrongPassword.status !== 401) {
+        throw new Error(`誤ったパスワードの GET / が ${wrongPassword.status} を返しました`);
+      }
+      // Origin 不一致の POST は拒否される（SEC-03）。CSRF 検証の退化を検出する Canary。
+      // 多重防御の第 1 段（React Router 内蔵の `allowedActionOrigins`）が先に動いて
+      // 400 を返すため、第 2 段の csrf ミドルウェア（403）には通常到達しない。
+      // どちらの段で拒否されても Canary としては成立する。
+      const crossOrigin = await fetch(`http://${host}/`, {
+        method: "POST",
+        redirect: "manual",
+        headers: {
+          authorization: smokeAuthorization,
+          "content-type": "text/plain",
+          origin: "https://evil.example.ts.net",
+        },
+      });
+      await crossOrigin.body?.cancel();
+      if (crossOrigin.status !== 403 && crossOrigin.status !== 400) {
+        throw new Error(`Origin 不一致の POST / が ${crossOrigin.status} を返しました`);
+      }
       // `/healthz` は認証免除の死活監視（SEC-10）。
       const healthz = await fetch(`http://${host}/healthz`, { redirect: "manual" });
       const healthzBody = await healthz.text();
