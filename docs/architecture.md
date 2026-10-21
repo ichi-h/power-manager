@@ -109,6 +109,8 @@ server.listen(port, "127.0.0.1");
 ```
 
 - `getLoadContext` は v8 では `RouterContextProvider` を返す（プレーンオブジェクトを返す例は v6/v7 のもの）。loader/action からは `context.get(configContext)` で参照する。
+- `configContext` は `globalThis` の 1 スロットから取る。`react-router build` の成果物（`build/server/index.js`）と自前エントリのバンドルは別のモジュールグラフになり、モジュールスコープで `createContext()` すると同じ名前でも実体が 2 つになる。`RouterContextProvider` はキーをオブジェクト同一性で照合するため、実体が分かれると「No value found for context」で 500 になる。`app/lib/config.server.ts` の `configContext` が唯一の情報源で、loader/action は `requireRuntimeConfig(context)` 経由で読む（未設定なら配線不整合と分かるメッセージで失敗する）。
+- 仮画面の `/` も loader で `requireRuntimeConfig` を呼ぶ。起動して 1 ページ返すだけで、2 つのモジュールグラフが同じキーを共有していることを確認できる（`npm run smoke` が本番ビルドに対して検証する）。
 - ストリーミングは Web 標準の `ReadableStream` をそのまま流す。
 - SIGTERM/SIGINT では `server.close()` → スケジューラ停止 → リングバッファの書き出し（何もしない）→ `process.exit(0)`。5 秒で強制終了するタイマーを `unref()` 付きで併設する。
 - 開発時（`react-router dev`）は Vite がサーバーモジュールを再インポートするため、スケジューラはモジュールスコープのシングルトンで二重起動を防ぎ、`NODE_ENV !== "production"` では起動しない。

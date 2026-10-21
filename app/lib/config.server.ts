@@ -10,7 +10,7 @@
  */
 import path from "node:path";
 
-import { createContext } from "react-router";
+import { createContext, type RouterContext } from "react-router";
 import { z } from "zod";
 
 /** 実行モード。本番の環境変数ファイルでは `production` を指定する。 */
@@ -51,8 +51,46 @@ export type RuntimeConfig = {
  * 検証済みの実行時設定を loader/action へ渡すためのキー。
  * `server/app.ts` が `createLoadContext` で設定し、loader/action は
  * `context.get(configContext)` で参照する。
+ *
+ * キーの実体はプロセス内で 1 つでなければならない。`react-router build` が生成する
+ * `build/server/index.js`（ルート側）と自前エントリのバンドル（`server/index.js`）は
+ * 別のモジュールグラフであり、モジュールスコープで `createContext()` すると同じ名前でも
+ * 実体が 2 つになる。すると `server/app.ts` が入れた値がルート側から引けず、
+ * 実行時に「No value found for context」で 500 になる。`globalThis` 上の 1 つの
+ * スロットを唯一の情報源にして、どちらのグラフからも同じオブジェクトを返す。
+ *
+ * `RouterContextProvider` はキーをオブジェクト同一性で照合するため、この共有が必要になる。
  */
-export const configContext = createContext<RuntimeConfig>();
+const configContextSlot = "__powerManagerConfigContext";
+
+type ConfigContextRegistry = {
+  [configContextSlot]?: RouterContext<RuntimeConfig>;
+};
+
+const configContextRegistry = globalThis as unknown as ConfigContextRegistry;
+
+export const configContext: RouterContext<RuntimeConfig> = (configContextRegistry[
+  configContextSlot
+] ??= createContext<RuntimeConfig>());
+
+/**
+ * load context から実行時設定を読む。
+ *
+ * 未設定ならフレームワークの汎用メッセージではなく、配線不整合だと分かるエラーにする。
+ * 本番でここに来るのは、`getLoadContext` を通らない経路を作った場合だけである。
+ */
+export function requireRuntimeConfig(context: RouterContextProviderLike): RuntimeConfig {
+  try {
+    return context.get(configContext);
+  } catch {
+    throw new Error(
+      "実行時設定が load context にありません（server/app.ts の createLoadContext を経由していません）",
+    );
+  }
+}
+
+/** `RouterContextProvider` のうち `requireRuntimeConfig` が使う部分。テストで差し替えられるようにする。 */
+type RouterContextProviderLike = { get: <T>(key: RouterContext<T>) => T };
 
 /**
  * 環境変数の検証失敗。起動時は終了コード 78 の対象になる（NFR-05, NFR-06）。

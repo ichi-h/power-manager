@@ -2,17 +2,15 @@ import { describe, expect, test } from "vitest";
 
 import { loadRuntimeConfig } from "../app/lib/config.server.ts";
 
+import { validEnvironment } from "./support/environment.ts";
+
 /**
  * 起動要件は環境変数（と、後続の設定 JSON）の検証だけである（NFR-06）。
  * `ssh` 実行ファイルや鍵ファイルの存在は起動要件に含めない（`docs/architecture.md` 3.2）。
  */
 function environmentWith(paths: { identityFile: string; knownHostsFile: string }) {
   return {
-    POWER_MANAGER_CONFIG_PATH: "/etc/power-manager/config.json",
-    POWER_MANAGER_PORT: "8080",
-    POWER_MANAGER_PUBLIC_ORIGIN: "https://power.example.ts.net",
-    POWER_MANAGER_AUTH_USERNAME: "admin",
-    POWER_MANAGER_AUTH_PASSWORD_HASH: "$argon2id$v=19$m=65536,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM",
+    ...validEnvironment(),
     POWER_MANAGER_SSH_IDENTITY_FILE: paths.identityFile,
     POWER_MANAGER_SSH_KNOWN_HOSTS_FILE: paths.knownHostsFile,
   };
