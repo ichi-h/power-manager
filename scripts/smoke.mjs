@@ -18,14 +18,28 @@ const serverEntry = "server/index.js";
 const timeoutMilliseconds = 30_000;
 /** 不正な設定の子プロセスを待つ上限。待受を開始しないので、長く待つ意味がない。 */
 const invalidExitMilliseconds = 5_000;
-/** 既存の設定 JSON を指しておけばよい（この時点ではまだ読まれない）。 */
+/**
+ * 既存のファイルを指せばよい環境変数（秘密鍵・`known_hosts`）の代用。
+ * これらは起動時にパスの形式だけを見る。
+ */
 const existingFile = process.env.SMOKE_CONFIG_PATH ?? path.resolve("package.json");
+
+/**
+ * 管理対象 JSON。起動時に読み、全体検証する（FR-08, FR-09）。
+ * リポジトリ同梱の開発用の例を使う。`package.json` を指すと JSON 検証で終了コード 78 になる。
+ */
+const managedConfigPath = process.env.SMOKE_MANAGED_CONFIG ?? path.resolve("dev/config.json");
 
 for (const artifact of ["build/server/index.js", serverEntry]) {
   if (!existsSync(artifact)) {
     console.error(`${artifact} がありません。先に npm run build を実行してください。`);
     process.exit(1);
   }
+}
+
+if (!existsSync(managedConfigPath)) {
+  console.error(`${managedConfigPath} がありません。開発用の設定例を用意してください。`);
+  process.exit(1);
 }
 
 /**
@@ -60,7 +74,7 @@ const host = `localhost:${port}`;
  */
 const runtimeEnvironment = {
   NODE_ENV: "production",
-  POWER_MANAGER_CONFIG_PATH: existingFile,
+  POWER_MANAGER_CONFIG_PATH: managedConfigPath,
   POWER_MANAGER_PORT: String(port),
   POWER_MANAGER_PUBLIC_ORIGIN: `https://${host}`,
   POWER_MANAGER_AUTH_USERNAME: "smoke",

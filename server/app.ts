@@ -5,8 +5,10 @@
  * `server/index.ts` は待受と終了コードを扱う。起動時検証の失敗は呼び出し側が終了コード
  * 78 で終了する（NFR-05, NFR-06）。
  *
- * load context には検証済みの実行時設定を 1 度だけ載せ、loader/action からは
- * `context.get(configContext)` で参照する。要求ごとに環境変数を読み直さない。
+ * load context には検証済みの実行時設定と設定ストアを載せ、loader/action からは
+ * `context.get(configContext)` / `context.get(configStoreContext)` で参照する。
+ * 要求ごとに環境変数を読み直さない。設定ストアは同一インスタンスを共有し、
+ * 再読込の差し替えがすべての要求へ見えるようにする。
  */
 import { createRequestListener } from "@react-router/node";
 import { RouterContextProvider, type ServerBuild } from "react-router";
@@ -16,9 +18,13 @@ import {
   toPublicRuntimeConfig,
   type RuntimeConfig,
 } from "../app/lib/config.server.ts";
+import {
+  configStoreContext,
+  type ConfigStore,
+} from "../app/lib/config-store.server.ts";
 import { logRequestFailure } from "./log.ts";
 
-export type { RuntimeConfig };
+export type { ConfigStore, RuntimeConfig };
 
 /**
  * loader/action へ渡す load context を組み立てる。
@@ -27,9 +33,13 @@ export type { RuntimeConfig };
  * 認証ミドルウェア（`t004`）が起動時の設定から直接読む。load context は全 loader/action
  * から到達できるため、型で到達不能にしておく（SEC-05）。
  */
-export function createLoadContext(runtime: RuntimeConfig): RouterContextProvider {
+export function createLoadContext(
+  runtime: RuntimeConfig,
+  configStore: ConfigStore,
+): RouterContextProvider {
   const context = new RouterContextProvider();
   context.set(configContext, toPublicRuntimeConfig(runtime));
+  context.set(configStoreContext, configStore);
   return context;
 }
 
@@ -85,11 +95,11 @@ async function loadServerBuild(runtime: RuntimeConfig): Promise<ServerBuild> {
   return withErrorHandler(withAllowedActionOrigins(build, runtime.publicOriginHost));
 }
 
-export function createAppListener(runtime: RuntimeConfig) {
+export function createAppListener(runtime: RuntimeConfig, configStore: ConfigStore) {
   return createRequestListener({
     build: () => loadServerBuild(runtime),
     // 明示しないと `develop` 扱いになり、開発用の挙動が残る（SEC-05）。
     mode: "production",
-    getLoadContext: () => createLoadContext(runtime),
+    getLoadContext: () => createLoadContext(runtime, configStore),
   });
 }

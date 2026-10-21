@@ -18,15 +18,36 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
+/**
+ * 設定 JSON の読込みだけを差し替える。
+ *
+ * 起動検証はファイルの実在に依存させたくない（鍵ファイルの存在は起動要件に含めない
+ * のと同じ理由）。`node:fs/promises` の `readFile` はここで置き換える。
+ */
+const configFile = vi.hoisted(() => ({ content: "" as string, error: null as Error | null }));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    readFile: async () => {
+      if (configFile.error) throw configFile.error;
+      return configFile.content;
+    },
+  };
+});
+
 import { ConfigurationError, loadRuntimeConfig } from "../app/lib/config.server.ts";
 import { configurationErrorExitCode } from "../app/lib/exit-codes.ts";
+import { ManagedConfigError } from "../app/lib/runtime-config.server.ts";
 import { startRuntime } from "../server/startup.ts";
 
 import { validEnvironment } from "./support/environment.ts";
+import { validManagedConfig } from "./support/managed-config.ts";
 
 /**
- * 起動要件は環境変数（と、後続の設定 JSON）の検証だけである（NFR-06）。
- * `ssh` 実行ファイルや鍵ファイルの存在は起動要件に含めない（`docs/architecture.md` 3.2）。
+ * 起動要件は環境変数と管理対象 JSON の検証だけである（NFR-06）。
+ * `ssh` 実行ファイルや鍵ファイルの実在は起動要件に含めない（`docs/architecture.md` 3.2）。
  */
 function environmentWith(paths: { identityFile: string; knownHostsFile: string }) {
   return {
@@ -35,6 +56,12 @@ function environmentWith(paths: { identityFile: string; knownHostsFile: string }
     POWER_MANAGER_SSH_KNOWN_HOSTS_FILE: paths.knownHostsFile,
   };
 }
+
+beforeEach(() => {
+  writtenToStderr.length = 0;
+  configFile.content = JSON.stringify(validManagedConfig());
+  configFile.error = null;
+});
 
 describe("起動要件", () => {
   test("ssh の鍵や known_hosts が存在しなくても起動検証を通す", () => {
@@ -70,15 +97,16 @@ describe("起動要件", () => {
     }
   });
 
-  test("PATH に ssh が無くても startRuntime が待受可能な設定を返す", () => {
+  test("PATH に ssh が無くても startRuntime が待受可能な設定を返す", async () => {
     const originalPath = process.env.PATH;
     delete process.env.PATH;
     try {
       const exit = vi.fn();
-      const runtime = startRuntime(validEnvironment(), exit);
+      const startup = await startRuntime(validEnvironment(), exit);
 
       expect(exit).not.toHaveBeenCalled();
-      expect(runtime.port).toBe(8080);
+      expect(startup.runtime.port).toBe(8080);
+      expect(startup.configStore.current().servers[0]?.id).toBe("nas");
     } finally {
       if (originalPath === undefined) delete process.env.PATH;
       else process.env.PATH = originalPath;
@@ -87,37 +115,31 @@ describe("起動要件", () => {
 });
 
 describe("startRuntime", () => {
-  let stderr: string[];
-
-  beforeEach(() => {
-    writtenToStderr.length = 0;
-    stderr = writtenToStderr;
-  });
-
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  test("検証を通れば終了せずに設定を返す", () => {
+  test("検証を通れば終了せずに設定と設定ストアを返す", async () => {
     const exit = vi.fn();
 
-    const runtime = startRuntime(validEnvironment(), exit);
+    const startup = await startRuntime(validEnvironment(), exit);
 
     expect(exit).not.toHaveBeenCalled();
-    expect(runtime.publicOrigin).toBe("https://power.example.ts.net");
-    expect(stderr).toEqual([]);
+    expect(startup.runtime.publicOrigin).toBe("https://power.example.ts.net");
+    expect(startup.configStore.current().version).toBe(2);
+    expect(writtenToStderr).toEqual([]);
   });
 
-  test("設定不備では終了コード 78 で終了し、startup_failed を 1 行だけ出す", () => {
+  test("環境変数の不備では終了コード 78 で終了し、startup_failed を 1 行だけ出す", async () => {
     const exit = vi.fn();
 
-    expect(() => startRuntime({ ...validEnvironment(), POWER_MANAGER_PORT: "abc" }, exit)).toThrow(
-      ConfigurationError,
-    );
+    await expect(
+      startRuntime({ ...validEnvironment(), POWER_MANAGER_PORT: "abc" }, exit),
+    ).rejects.toThrow(ConfigurationError);
 
     expect(exit).toHaveBeenCalledWith(configurationErrorExitCode);
-    expect(stderr).toHaveLength(1);
-    const line = stderr[0] ?? "";
+    expect(writtenToStderr).toHaveLength(1);
+    const line = writtenToStderr[0] ?? "";
     expect(line.endsWith("\n")).toBe(true);
     expect(JSON.parse(line)).toMatchObject({
       event: "startup_failed",
@@ -125,26 +147,52 @@ describe("startRuntime", () => {
     });
   });
 
-  test("設定不備以外の例外は再送出し、終了しない", () => {
+  test("設定 JSON の検証失敗も終了コード 78 で終了する（FR-08）", async () => {
+    const exit = vi.fn();
+    configFile.content = JSON.stringify({ ...validManagedConfig(), version: 1 });
+
+    await expect(startRuntime(validEnvironment(), exit)).rejects.toThrow(ManagedConfigError);
+
+    expect(exit).toHaveBeenCalledWith(configurationErrorExitCode);
+    expect(JSON.parse(writtenToStderr[0] ?? "")).toMatchObject({
+      event: "startup_failed",
+      code: "invalid_configuration",
+    });
+    // 検証の対象が環境変数ではなく管理対象 JSON だと分かる文言にする。
+    expect(writtenToStderr.join("")).toContain("管理対象の設定が不正です");
+  });
+
+  test("設定ファイルが読めない場合も設定不備として終了する", async () => {
+    const exit = vi.fn();
+    configFile.error = Object.assign(new Error("ENOENT: no such file or directory"), {
+      code: "ENOENT",
+    });
+
+    await expect(startRuntime(validEnvironment(), exit)).rejects.toThrow(ManagedConfigError);
+
+    expect(exit).toHaveBeenCalledWith(configurationErrorExitCode);
+    expect(writtenToStderr.join("")).toContain("設定ファイルが見つかりません");
+    // 生の fs メッセージ（パス）はログに出さない。
+    expect(writtenToStderr.join("")).not.toContain("no such file or directory");
+  });
+
+  test("設定不備以外の例外は再送出し、終了しない", async () => {
     const exit = vi.fn();
 
     // 環境変数が `undefined` のオブジェクトではなく `null` を渡すと、想定外の例外になる。
-    expect(() => startRuntime(null as never, exit)).toThrow();
+    await expect(startRuntime(null as never, exit)).rejects.toThrow();
     expect(exit).not.toHaveBeenCalled();
-    expect(stderr).toEqual([]);
+    expect(writtenToStderr).toEqual([]);
   });
 
-  test("startup_failed の reason に環境変数の値を混ぜない", () => {
+  test("startup_failed の reason に環境変数の値を混ぜない", async () => {
     const exit = vi.fn();
     const secret = "super-secret-password-hash";
 
-    try {
-      startRuntime({ ...validEnvironment(), POWER_MANAGER_AUTH_PASSWORD_HASH: secret }, exit);
-    } catch {
-      // 終了コードはここでは見ない。
-    }
-
-    expect(stderr.join("")).not.toContain(secret);
-    expect(stderr.join("")).toContain("POWER_MANAGER_AUTH_PASSWORD_HASH");
+    await expect(
+      startRuntime({ ...validEnvironment(), POWER_MANAGER_AUTH_PASSWORD_HASH: secret }, exit),
+    ).rejects.toThrow();
+    expect(writtenToStderr.join("")).not.toContain(secret);
+    expect(writtenToStderr.join("")).toContain("POWER_MANAGER_AUTH_PASSWORD_HASH");
   });
 });

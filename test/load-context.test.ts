@@ -6,14 +6,27 @@ import {
   loadRuntimeConfig,
   requireRuntimeConfig,
 } from "../app/lib/config.server.ts";
+import {
+  configStoreContext,
+  createConfigStore,
+  requireConfigStore,
+} from "../app/lib/config-store.server.ts";
+import { parseManagedConfig } from "../app/lib/runtime-config.server.ts";
 import { createLoadContext } from "../server/app.ts";
 
 import { validEnvironment } from "./support/environment.ts";
+import { validManagedConfig } from "./support/managed-config.ts";
+
+/** 検証済みの設定とストアを持つ load context を作る。 */
+function contextWith(runtime: ReturnType<typeof loadRuntimeConfig>) {
+  const store = createConfigStore(runtime.configPath, parseManagedConfig(validManagedConfig()));
+  return createLoadContext(runtime, store);
+}
 
 describe("load context", () => {
   test("検証済みの実行時設定を loader/action から参照できる", () => {
     const runtime = loadRuntimeConfig(validEnvironment());
-    const context = createLoadContext(runtime);
+    const context = contextWith(runtime);
 
     // load context に載るのは公開値だけ（秘密値は同じ型に存在しない）。
     expect(context.get(configContext)).toEqual({
@@ -40,9 +53,24 @@ describe("load context", () => {
     expect(reloaded.configContext).toBe(configContext);
   });
 
+  test("設定ストアを loader/action から参照できる", () => {
+    const runtime = loadRuntimeConfig(validEnvironment());
+    const context = contextWith(runtime);
+
+    expect(requireConfigStore(context).current().servers.map((server) => server.id)).toEqual([
+      "nas",
+    ]);
+    // 実行時設定と設定ストアは別のキーで載せる。
+    expect(context.get(configStoreContext)).not.toBe(context.get(configContext));
+  });
+
+  test("設定ストアを載せていない context からの参照は配線不整合と分かるエラーになる", () => {
+    expect(() => requireConfigStore(new RouterContextProvider())).toThrow(/load context/);
+  });
+
   test("秘密値は load context から到達できない", () => {
     const runtime = loadRuntimeConfig(validEnvironment());
-    const context = createLoadContext(runtime);
+    const context = contextWith(runtime);
     const publicConfig: Record<string, unknown> = { ...requireRuntimeConfig(context) };
 
     // `AuthConfig` / `SshConfig` のキーが紛れ込んでいないことを、値の一致ではなく

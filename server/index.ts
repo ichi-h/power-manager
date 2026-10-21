@@ -2,7 +2,8 @@
  * HTTP サーバーのエントリポイント。
  *
  * 起動シーケンスのうち、ここでは待受とシグナル処理のみを扱う。
- * 環境変数の検証は `server/startup.ts`、load context の組み立ては `server/app.ts` が担う。
+ * 環境変数と管理対象 JSON の検証は `server/startup.ts`、load context の組み立ては
+ * `server/app.ts` が担う。
  *
  * CLI 引数は受け付けない（NFR-06）。設定は環境変数だけで渡す。
  */
@@ -21,9 +22,22 @@ const forcedExitMilliseconds = 5_000;
 const listenAddressErrorCodes = new Set(["EADDRINUSE", "EACCES", "EINVAL"]);
 
 // 引数は解釈しない。設定は環境変数だけで渡す（NFR-06）。
-const runtime = startRuntime();
+//
+// `startRuntime` は設定不備なら終了コード 78 で終了したうえで例外を投げる（テストで
+// `process.exit` を差し替えられるようにするため）。待受を始めないことを保証するため、
+// ここで受け止めて以降の処理へ進まない。
 
-const requestListener = createAppListener(runtime);
+let startup;
+try {
+  startup = await startRuntime();
+} catch {
+  // 設定不備は `startRuntime` が `startup_failed` を出力済み。追加の出力はしない。
+  process.exit(configurationErrorExitCode);
+}
+
+const { runtime, configStore } = startup;
+
+const requestListener = createAppListener(runtime, configStore);
 
 const server = createServer(
   (request: IncomingMessage, response: ServerResponse) => {
