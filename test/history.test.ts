@@ -85,7 +85,7 @@ describe("createOperationHistory", () => {
     history.push(record("a"));
     history.push(record("b"));
 
-    const recent = history.recent();
+    const recent = history.recent() as Array<PowerOperationRecord>;
     recent.pop();
     recent.push(record("injected"));
 
