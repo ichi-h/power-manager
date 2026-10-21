@@ -282,7 +282,7 @@ ssh -i <identityFile>
 - 実行中フラグが立っているサーバーは対象から除外し、`skipped`（理由 `busy`）として結果に含める。残りのサーバーは継続する。
 - 結果は `{ target, result, code }` の配列と、`{ ok, failed, skipped }` の要約を返す。画面には「n 件成功 / m 件失敗 / k 件スキップ」として出す。
 - 対象集合の確定は `resolveBatchTargets`（`app/lib/power.server.ts`）が担う。全台（`all`）またはグループ ID を受け取り、サーバー ID で重複排除する。同じサーバーが複数グループに所属しても実行は 1 回である。
-- action は `intent=wake-group` / `intent=shutdown-group` と `scope`（`all` またはグループ ID）を受ける。未知のグループ ID と対象 0 台は `400` とし、操作しない。
+- action は `intent=wake-group` / `intent=shutdown-group` と、種別を分けた対象範囲 `scopeKind`（`all` または `group`）と `scopeId`（グループ ID）を受ける。`scopeKind=group` では `scopeId` を必須とし、`scopeKind=all` では `scopeId` を無視する。種別を分けるのは、グループ ID に `all` という文字列を定義でき、`scope` 1 つでは全台一括と衝突するためである。グループ ID は `all` を含め任意の文字列を許し、予約語を設けない。未知のグループ ID と対象 0 台は `400` とし、操作しない。
 - 一括の `busy` は単体操作の「実行中（拒否）」と区別し、「スキップ」として表示する（対象から外したため）。
 - 部分失敗を全体の失敗に読み替えない（FR-11）。電源操作にトランザクションは無い。
 
