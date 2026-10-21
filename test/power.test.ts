@@ -394,6 +394,102 @@ describe('一括操作の対象集合と要約（FR-11）', () => {
     expect(outcome.summary).toEqual({ ok: 12, failed: 0, skipped: 0 });
     expect(peak).toBeLessThanOrEqual(8);
   });
+
+  test('単体操作と一括操作が重なっても実行中の台数は 8 を超えない（NFR-08）', async () => {
+    let running = 0;
+    let peak = 0;
+    const track = async () => {
+      running += 1;
+      peak = Math.max(peak, running);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      running -= 1;
+      return { result: 'succeeded' as const, code: null };
+    };
+    const operator = createPowerOperator({
+      runShutdown: (async () => track()) as OperateServer,
+    });
+
+    const batchTargets = Array.from({ length: 6 }, (_unused, index) => ({
+      ...server,
+      id: `batch-${index}`,
+    }));
+    const singles = Array.from({ length: 6 }, (_unused, index) => ({
+      ...server,
+      id: `single-${index}`,
+    }));
+
+    // 一括を先に起動し、枠が埋まったところで単体操作を重ねる。
+    const batch = operator.operateAll(
+      { type: 'all' },
+      'shutdown',
+      batchTargets,
+      runtime,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    const singleRuns = singles.map((single) =>
+      operator.operate(single.id, { type: 'server', id: single.id }, 'shutdown', single, runtime),
+    );
+
+    const [outcome] = await Promise.all([batch, ...singleRuns]);
+
+    expect(outcome.records).toHaveLength(6);
+    expect(peak).toBeLessThanOrEqual(8);
+    // 一括・単体とも実行された（スキップに巻き戻っていない）。
+    expect(outcome.summary).toEqual({ ok: 6, failed: 0, skipped: 0 });
+  });
+
+  test('枠の解放と同時に新しい操作が来ても、同時実行数は上限を超えない', async () => {
+    // 枠の解放（`release`）から待機者が起床するまでの間に、新しい操作が枠を取ると
+    // 上限を超える。起床側の `active += 1` をやめ、解放側から枠を直接引き渡す形に
+    // しているのはこのためである。解放直後に走る `onRecord` から新しい操作を
+    // 1 件起こし、その隙間を再現する。
+    let running = 0;
+    let peak = 0;
+    let extraStarted = false;
+    const started: Array<Promise<unknown>> = [];
+    let operator: ReturnType<typeof createPowerOperator>;
+    operator = createPowerOperator({
+      runShutdown: (async () => {
+        running += 1;
+        peak = Math.max(peak, running);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        running -= 1;
+        return { result: 'succeeded' as const, code: null };
+      }) as OperateServer,
+      onRecord: (record) => {
+        // 一括の 1 台目が終わった直後（枠の解放直後）に単体操作を起こす。
+        if (extraStarted || record.result !== 'succeeded') return;
+        if (record.target.id === 'extra') return;
+        extraStarted = true;
+        const extra = { ...server, id: 'extra' };
+        started.push(
+          operator.operate(
+            'extra',
+            { type: 'server', id: 'extra' },
+            'shutdown',
+            extra,
+            runtime,
+          ),
+        );
+      },
+    });
+
+    const targets = Array.from({ length: 12 }, (_unused, index) => ({
+      ...server,
+      id: `server-${index}`,
+    }));
+    const batch = operator.operateAll(
+      { type: 'all' },
+      'shutdown',
+      targets,
+      runtime,
+    );
+    const [outcome] = await Promise.all([batch, ...started]);
+
+    expect(extraStarted).toBe(true);
+    expect(outcome.summary).toEqual({ ok: 12, failed: 0, skipped: 0 });
+    expect(peak).toBeLessThanOrEqual(8);
+  });
 });
 
 describe('WOL の実送信', () => {

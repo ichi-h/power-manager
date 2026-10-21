@@ -343,18 +343,24 @@ export function createStatusChecker(
   let active = 0;
   const waiting: Array<() => void> = [];
 
+  // 起床時は待機側で `active` を増やさず、枠を解放側から直接引き渡す（操作の
+  // セマフォと同じ理由。起床待ちの間に別の確認が枠を取ると上限を超える）。
   const acquire = async (): Promise<void> => {
     if (active < checkConcurrency) {
       active += 1;
       return;
     }
     await new Promise<void>((resolve) => waiting.push(resolve));
-    active += 1;
   };
 
   const release = () => {
-    active -= 1;
-    waiting.shift()?.();
+    const next = waiting.shift();
+    if (next === undefined) {
+      active -= 1;
+      return;
+    }
+    // 枠は解放側が持ったまま待機者へ渡す（`active` は減らさない）。
+    next();
   };
 
   /** 対象 ID ごとの進行中 Promise。完了時に破棄する。 */
@@ -637,18 +643,24 @@ export function createPowerOperator(
   let active = 0;
   const waiting: Array<() => void> = [];
 
+  // 起床時は待機側で `active` を増やさず、枠を解放側から直接引き渡す。待機側でも
+  // 増やすと、起床待ちの間に別の操作が枠を取った場合に上限を超える。
   const acquire = async (): Promise<void> => {
     if (active < operationConcurrency) {
       active += 1;
       return;
     }
     await new Promise<void>((resolve) => waiting.push(resolve));
-    active += 1;
   };
 
   const release = () => {
-    active -= 1;
-    waiting.shift()?.();
+    const next = waiting.shift();
+    if (next === undefined) {
+      active -= 1;
+      return;
+    }
+    // 枠は解放側が持ったまま待機者へ渡す（`active` は減らさない）。
+    next();
   };
 
   /**
