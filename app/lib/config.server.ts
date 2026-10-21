@@ -30,6 +30,12 @@ export type RuntimeConfig = {
   port: number;
   /** CSRF 検証に使う外部 Origin（スキーム・ホスト・ポートのみ）。 */
   publicOrigin: string;
+  /**
+   * `publicOrigin` のホスト部（スキームを含まない `host[:port]`）。
+   * React Router の `allowedActionOrigins` は `Origin` ヘッダーの `host` と照合するため、
+   * `publicOrigin`（スキーム付き）とは別に保持する。
+   */
+  publicOriginHost: string;
   /** Basic 認証のユーザー名。 */
   authUsername: string;
   /** Basic 認証のパスワードハッシュ（Argon2id）。 */
@@ -60,6 +66,9 @@ export class ConfigurationError extends Error {
   }
 }
 
+/** Origin のホスト名として解釈させない予約語。`Origin: null` との完全一致を防ぐ。 */
+const reservedHostnames = new Set(["null", "undefined", "true", "false"]);
+
 /** Argon2id の標準的な encoded 形式（`$argon2id$v=..$m=..,t=..,p=..$salt$hash`）。 */
 const argon2idHashPattern =
   /^\$argon2id\$v=\d+\$m=\d+,t=\d+,p=\d+\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+$/;
@@ -77,15 +86,33 @@ function absolutePath() {
   });
 }
 
+/** Origin として正規化した結果。 */
+type PublicOrigin = {
+  /** スキーム付きの Origin（`https://host[:port]`）。自前ミドルウェアの完全一致検証に使う。 */
+  origin: string;
+  /** スキームを含まない `host[:port]`。`allowedActionOrigins` の照合形式。 */
+  host: string;
+};
+
 /**
- * `POWER_MANAGER_PUBLIC_ORIGIN` を Origin 文字列へ正規化する。
+ * `allowedActionOrigins` が解釈するパターンとして妥当か。
+ *
+ * React Router の照合は `*` / `**` をワイルドカードとして扱うため、ホストに `*` を含めると
+ * VPN 内の任意ホストからの `POST` が第 1 層を通過してしまう。完全一致だけを許可する。
+ */
+function isAllowedActionOriginPattern(host: string): boolean {
+  return host !== "" && !host.includes("*");
+}
+
+/**
+ * `POWER_MANAGER_PUBLIC_ORIGIN` を Origin として正規化する。
  * 許可するのは HTTPS、および `http://localhost[:port]`（SEC-02, `docs/security.md` 3.2）。
  *
  * HTTP はここでは形式としてのみ通し、`production` での禁止は `environmentSchema` の
  * クロスフィールド検証（`NODE_ENV` × `POWER_MANAGER_PUBLIC_ORIGIN`）で行う。
  * この関数は `NODE_ENV` を知らないため、単体では配備モードを判定できない。
  */
-function parsePublicOrigin(value: string): string | null {
+function parsePublicOrigin(value: string): PublicOrigin | null {
   let url: URL;
   try {
     url = new URL(value);
@@ -97,8 +124,24 @@ function parsePublicOrigin(value: string): string | null {
   if (url.username !== "" || url.password !== "") return null;
   if (url.pathname !== "/" || url.search !== "" || url.hash !== "") return null;
 
-  if (url.protocol === "https:") return url.origin;
-  if (url.protocol === "http:" && url.hostname === "localhost") return url.origin;
+  // ポート 0 は「空きポートで待受」の意味になり、Origin の指定として無効である。
+  if (url.port === "0") return null;
+
+  const hostname = url.hostname;
+  if (hostname === "") return null;
+  if (reservedHostnames.has(hostname)) return null;
+  // 末尾ドットはブラウザが送る `Origin` と一致しないため、正規化で落とさず拒否する。
+  if (hostname.endsWith(".")) return null;
+  // IPv6 リテラルは `[::1]` の形なので、空ラベルの判定は IPv4・ホスト名にだけ行う。
+  if (!hostname.startsWith("[") && hostname.split(".").some((label) => label === "")) {
+    return null;
+  }
+  if (!isAllowedActionOriginPattern(url.host)) return null;
+
+  if (url.protocol === "https:") return { origin: url.origin, host: url.host };
+  if (url.protocol === "http:" && hostname === "localhost") {
+    return { origin: url.origin, host: url.host };
+  }
   return null;
 }
 
@@ -113,12 +156,21 @@ const portValue = requiredString()
       .max(65535, { message: "1 から 65535 の整数で指定してください" }),
   );
 
-const publicOriginValue = requiredString()
-  .refine((value) => parsePublicOrigin(value) !== null, {
-    message:
-      "HTTPS の URL、または開発時のみ http://localhost[:port] を、パスを含めずに指定してください",
-  })
-  .transform((value) => parsePublicOrigin(value) as string);
+const publicOriginMessage =
+  "HTTPS の URL、または開発時のみ http://localhost[:port] を、パスを含めずに指定してください";
+
+/**
+ * 検証と正規化を 1 回の評価で行う。`refine` で判定して `transform` で再度解析すると、
+ * 判定結果と変換結果が食い違う余地が残るため、変換のなかで invalid にする。
+ */
+const publicOriginValue = requiredString().transform((value, ctx) => {
+  const parsed = parsePublicOrigin(value);
+  if (parsed === null) {
+    ctx.addIssue({ code: "custom", message: publicOriginMessage });
+    return z.NEVER;
+  }
+  return parsed;
+});
 
 const passwordHashValue = requiredString().refine(
   (value) => argon2idHashPattern.test(value),
@@ -154,7 +206,10 @@ const environmentSchema = z
    * 動き、配備ミスを起動時に検出できない（NFR-06, `docs/security.md` 3.2）。
    */
   .superRefine((data, ctx) => {
-    if (data.NODE_ENV === "production" && data.POWER_MANAGER_PUBLIC_ORIGIN.startsWith("http:")) {
+    if (
+      data.NODE_ENV === "production" &&
+      data.POWER_MANAGER_PUBLIC_ORIGIN.origin.startsWith("http:")
+    ) {
       ctx.addIssue({
         code: "custom",
         path: ["POWER_MANAGER_PUBLIC_ORIGIN"],
@@ -194,7 +249,8 @@ export function loadRuntimeConfig(
   return {
     configPath: parsed.data.POWER_MANAGER_CONFIG_PATH,
     port: parsed.data.POWER_MANAGER_PORT,
-    publicOrigin: parsed.data.POWER_MANAGER_PUBLIC_ORIGIN,
+    publicOrigin: parsed.data.POWER_MANAGER_PUBLIC_ORIGIN.origin,
+    publicOriginHost: parsed.data.POWER_MANAGER_PUBLIC_ORIGIN.host,
     authUsername: parsed.data.POWER_MANAGER_AUTH_USERNAME,
     authPasswordHash: parsed.data.POWER_MANAGER_AUTH_PASSWORD_HASH,
     sshIdentityFile: parsed.data.POWER_MANAGER_SSH_IDENTITY_FILE,

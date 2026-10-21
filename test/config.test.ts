@@ -128,6 +128,39 @@ describe("公開 Origin", () => {
     ).toThrow(/POWER_MANAGER_PUBLIC_ORIGIN/);
   });
 
+  test("スキームを含まない host を併せて導出する", () => {
+    const runtime = loadRuntimeConfig({
+      ...validEnvironment(),
+      POWER_MANAGER_PUBLIC_ORIGIN: "https://power.example.ts.net:8443",
+    });
+
+    expect(runtime.publicOrigin).toBe("https://power.example.ts.net:8443");
+    // allowedActionOrigins の照合形式に合わせる。スキームを含めると一致しない。
+    expect(runtime.publicOriginHost).toBe("power.example.ts.net:8443");
+  });
+
+  test.each([
+    // ワイルドカードは allowedActionOrigins で任意ホストに一致してしまう。
+    "https://*.example.com",
+    "https://*.ts.net",
+    "https://*",
+    "https://**",
+    // 予約語ホストは `Origin: null` と完全一致する。
+    "https://null",
+    "https://undefined",
+    "https://true",
+    "https://false",
+    // 空ラベル・末尾ドット・ポート 0 は Origin として無効。
+    "https://a..b",
+    "https://.example.com",
+    "https://a.ts.net.",
+    "https://power.example.ts.net:0",
+  ])("Origin として不正な %s を拒否する", (value) => {
+    expect(() =>
+      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_PUBLIC_ORIGIN: value }),
+    ).toThrow(/POWER_MANAGER_PUBLIC_ORIGIN/);
+  });
+
   test.each([
     "http://power.example.ts.net",
     "http://127.0.0.1:5173",
