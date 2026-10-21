@@ -5,7 +5,8 @@ in {
   options.services.power-manager = {
     enable = lib.mkEnableOption "power-manager";
     package = lib.mkOption { type = lib.types.package; default = self.packages.${pkgs.system}.default; description = "実行する power-manager パッケージ。"; };
-    environmentFile = lib.mkOption { type = lib.types.str; description = "秘密情報を含む systemd EnvironmentFile のパス。"; };
+    environmentFile = lib.mkOption { type = lib.types.path; description = "秘密情報を含む systemd EnvironmentFile のパス。"; };
+    configFile = lib.mkOption { type = lib.types.nullOr (lib.types.either lib.types.path lib.types.str); default = null; description = "管理対象 JSON（サーバー・グループ・予約）のパス。"; };
   };
   config = lib.mkIf cfg.enable {
     users.users.power-manager = { isSystemUser = true; group = "power-manager"; };
@@ -19,6 +20,7 @@ in {
       serviceConfig = {
         ExecStart = "${cfg.package}/bin/power-manager";
         EnvironmentFile = cfg.environmentFile;
+        Environment = lib.optional (cfg.configFile != null) "POWER_MANAGER_CONFIG_PATH=${toString cfg.configFile}";
         User = "power-manager";
         Group = "power-manager";
         Restart = "on-failure";
