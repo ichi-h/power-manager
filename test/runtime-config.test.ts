@@ -1,0 +1,149 @@
+import { describe, expect, test } from "vitest";
+
+import {
+  ManagedConfigError,
+  managedConfigSchema,
+  parseManagedConfig,
+} from "../app/lib/runtime-config.server.ts";
+
+/** 検証を通る最小の定義。個々のテストはここから 1 か所だけ壊す。 */
+function validConfig(): Record<string, unknown> {
+  return {
+    version: 2,
+    servers: [
+      {
+        id: "nas",
+        name: "NAS",
+        groups: ["storage"],
+        macAddress: "00:11:22:33:44:55",
+        ssh: {
+          host: "nas.example.internal",
+          user: "power-manager",
+          shutdownCommand: "sudo systemctl poweroff",
+        },
+      },
+    ],
+    groups: [{ id: "storage", name: "ストレージ" }],
+    schedules: [],
+  };
+}
+
+/** 検証エラーの指摘を 1 本の文字列にして、`toContain` で見る。 */
+function issuesOf(input: unknown): string {
+  const parsed = managedConfigSchema.safeParse(input);
+  if (parsed.success) throw new Error("検証を通ってしまいました");
+  return parsed.error.issues.map((issue) => `${issue.path.map(String).join(".")}: ${issue.message}`).join(" / ");
+}
+
+describe("設定 JSON のスキーマ", () => {
+  test("既定値を適用する（groups、wol.broadcastAddress、wol.port、ssh.port）", () => {
+    const config = parseManagedConfig(validConfig());
+    const server = config.servers[0];
+
+    expect(server?.groups).toEqual(["storage"]);
+    expect(server?.wol).toEqual({ broadcastAddress: "255.255.255.255", port: 9 });
+    expect(server?.ssh.port).toBe(22);
+  });
+
+  test("wol を空オブジェクトで指定しても既定値になる", () => {
+    const input = validConfig();
+    (input.servers as Record<string, unknown>[])[0]!.wol = {};
+
+    expect(parseManagedConfig(input).servers[0]?.wol).toEqual({
+      broadcastAddress: "255.255.255.255",
+      port: 9,
+    });
+  });
+
+  test("明示した値は既定値で上書きしない", () => {
+    const input = validConfig();
+    const server = (input.servers as Record<string, unknown>[])[0]!;
+    server.wol = { broadcastAddress: "192.168.1.255", port: 7 };
+    server.ssh = { ...(server.ssh as object), port: 2222 };
+
+    expect(parseManagedConfig(input).servers[0]?.wol).toEqual({
+      broadcastAddress: "192.168.1.255",
+      port: 7,
+    });
+    expect(parseManagedConfig(input).servers[0]?.ssh.port).toBe(2222);
+  });
+
+  test("ルートの未知項目を拒否する", () => {
+    expect(issuesOf({ ...validConfig(), extra: true })).toContain("未知の項目です");
+  });
+
+  test("入れ子の未知項目も拒否する", () => {
+    const input = validConfig();
+    (input.servers as Record<string, unknown>[])[0]!.mac = "00:11:22:33:44:55";
+
+    expect(issuesOf(input)).toContain("servers.0: 未知の項目です");
+  });
+
+  test("version は 2 固定で、1 は拒否する", () => {
+    expect(issuesOf({ ...validConfig(), version: 1 })).toContain("version:");
+    expect(issuesOf({ ...validConfig(), version: "2" })).toContain("version:");
+    expect(() => parseManagedConfig({ ...validConfig(), version: undefined })).toThrow(
+      ManagedConfigError,
+    );
+  });
+
+  test("型不一致を項目名付きで拒否する", () => {
+    const input = validConfig();
+    (input.servers as Record<string, unknown>[])[0]!.macAddress = 1234;
+
+    expect(issuesOf(input)).toContain("servers.0.macAddress: 文字列で指定してください");
+  });
+
+  test("必須項目の欠落と空値を拒否する", () => {
+    const input = validConfig();
+    const server = (input.servers as Record<string, unknown>[])[0]!;
+    delete server.name;
+    server.macAddress = "";
+
+    const issues = issuesOf(input);
+    expect(issues).toContain("servers.0.name: 必須です");
+    expect(issues).toContain("servers.0.macAddress: 空にできません");
+  });
+
+  test("前後の空白を含む値を拒否する", () => {
+    const input = validConfig();
+    (input.servers as Record<string, unknown>[])[0]!.id = " nas";
+
+    expect(issuesOf(input)).toContain("servers.0.id: 前後に空白を含めないでください");
+  });
+
+  test("MAC アドレスの形式を検証する", () => {
+    for (const macAddress of ["00-11-22-33-44-55", "00:11:22:33:44", "00:11:22:33:44:55:66", "gg:11:22:33:44:55"]) {
+      const input = validConfig();
+      (input.servers as Record<string, unknown>[])[0]!.macAddress = macAddress;
+
+      expect(issuesOf(input)).toContain("servers.0.macAddress: MAC アドレスの形式");
+    }
+  });
+
+  test("ブロードキャストアドレスは IPv4 のみを受け付ける", () => {
+    const input = validConfig();
+    (input.servers as Record<string, unknown>[])[0]!.wol = { broadcastAddress: "ff02::1" };
+
+    expect(issuesOf(input)).toContain("servers.0.wol.broadcastAddress: IPv4 アドレス");
+  });
+
+  test("ポート番号の範囲を検証する", () => {
+    const input = validConfig();
+    (input.servers as Record<string, unknown>[])[0]!.ssh = {
+      host: "nas.example.internal",
+      user: "power-manager",
+      shutdownCommand: "sudo systemctl poweroff",
+      port: 70000,
+    };
+
+    expect(issuesOf(input)).toContain("servers.0.ssh.port: 1 から 65535 の整数で指定してください");
+  });
+
+  test("ポート番号は文字列や小数を受け付けない", () => {
+    const input = validConfig();
+    (input.servers as Record<string, unknown>[])[0]!.wol = { port: "9" };
+
+    expect(issuesOf(input)).toContain("servers.0.wol.port: 数値で指定してください");
+  });
+});
