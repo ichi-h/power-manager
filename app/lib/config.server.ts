@@ -18,6 +18,10 @@ export type NodeEnvironment = "production" | "development" | "test";
 
 /**
  * 検証済みの実行時設定。秘密値もここに含まれるため、画面・ログへ出力しない（SEC-05）。
+ *
+ * `sshIdentityFile` と `sshKnownHostsFile` は「パスの検証だけ」を起動要件にする。
+ * `ssh` 実行ファイルの存在や鍵の実在・権限は起動時に見ない（`docs/architecture.md` 3.2）。
+ * `ssh` の不在は停止操作の実行時に `ssh_unavailable` として検出する。
  */
 export type RuntimeConfig = {
   /** 管理対象 JSON の絶対パス。 */
@@ -117,7 +121,13 @@ const passwordHashValue = requiredString().refine(
   { message: "$argon2id$ で始まる Argon2id のハッシュを指定してください" },
 );
 
-/** 環境変数のスキーマ。ここに並ぶ変数がすべて揃わなければ起動しない（NFR-06）。 */
+/**
+ * 環境変数のスキーマ。ここに並ぶ変数がすべて揃わなければ起動しない（NFR-06）。
+ *
+ * 検証は「値の形式」に限る。外部資源の存在確認（`ssh` 実行ファイル、秘密鍵、
+ * 管理対象 JSON）は起動要件に含めない。Nix の配置と手動配置の両方を許容し、
+ * 起動要件を環境変数の検証だけに限定するためである。
+ */
 const environmentSchema = z.object({
   POWER_MANAGER_CONFIG_PATH: absolutePath(),
   POWER_MANAGER_PORT: portValue,
