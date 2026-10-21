@@ -93,12 +93,39 @@ describe("公開 Origin", () => {
     ["https://power.example.ts.net", "https://power.example.ts.net"],
     ["https://power.example.ts.net:8443", "https://power.example.ts.net:8443"],
     ["https://power.example.ts.net/", "https://power.example.ts.net"],
-    ["http://localhost", "http://localhost"],
-    ["http://localhost:5173", "http://localhost:5173"],
-  ])("%s を %s として受け付ける", (value, expected) => {
+  ])("本番の HTTPS Origin %s を %s として受け付ける", (value, expected) => {
     expect(
       loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_PUBLIC_ORIGIN: value }).publicOrigin,
     ).toBe(expected);
+  });
+
+  test.each([
+    ["http://localhost", "http://localhost"],
+    ["http://localhost:5173", "http://localhost:5173"],
+  ])("開発時の HTTP Origin %s を %s として受け付ける", (value, expected) => {
+    expect(
+      loadRuntimeConfig({
+        ...validEnvironment(),
+        NODE_ENV: "development",
+        POWER_MANAGER_PUBLIC_ORIGIN: value,
+      }).publicOrigin,
+    ).toBe(expected);
+  });
+
+  test("本番では http://localhost の Origin を拒否する", () => {
+    expect(() =>
+      loadRuntimeConfig({
+        ...validEnvironment(),
+        NODE_ENV: "production",
+        POWER_MANAGER_PUBLIC_ORIGIN: "http://localhost:5173",
+      }),
+    ).toThrow(/POWER_MANAGER_PUBLIC_ORIGIN/);
+  });
+
+  test("NODE_ENV 未設定（既定の production）でも HTTP Origin を拒否する", () => {
+    expect(() =>
+      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_PUBLIC_ORIGIN: "http://localhost" }),
+    ).toThrow(/POWER_MANAGER_PUBLIC_ORIGIN/);
   });
 
   test.each([

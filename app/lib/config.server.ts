@@ -79,7 +79,11 @@ function absolutePath() {
 
 /**
  * `POWER_MANAGER_PUBLIC_ORIGIN` を Origin 文字列へ正規化する。
- * 許可するのは HTTPS、および開発時のみ `http://localhost[:port]`（SEC-02, `docs/security.md` 3.2）。
+ * 許可するのは HTTPS、および `http://localhost[:port]`（SEC-02, `docs/security.md` 3.2）。
+ *
+ * HTTP はここでは形式としてのみ通し、`production` での禁止は `environmentSchema` の
+ * クロスフィールド検証（`NODE_ENV` × `POWER_MANAGER_PUBLIC_ORIGIN`）で行う。
+ * この関数は `NODE_ENV` を知らないため、単体では配備モードを判定できない。
  */
 function parsePublicOrigin(value: string): string | null {
   let url: URL;
@@ -128,20 +132,36 @@ const passwordHashValue = requiredString().refine(
  * 管理対象 JSON）は起動要件に含めない。Nix の配置と手動配置の両方を許容し、
  * 起動要件を環境変数の検証だけに限定するためである。
  */
-const environmentSchema = z.object({
-  POWER_MANAGER_CONFIG_PATH: absolutePath(),
-  POWER_MANAGER_PORT: portValue,
-  POWER_MANAGER_PUBLIC_ORIGIN: publicOriginValue,
-  POWER_MANAGER_AUTH_USERNAME: requiredString(),
-  POWER_MANAGER_AUTH_PASSWORD_HASH: passwordHashValue,
-  POWER_MANAGER_SSH_IDENTITY_FILE: absolutePath(),
-  POWER_MANAGER_SSH_KNOWN_HOSTS_FILE: absolutePath(),
-  NODE_ENV: z
-    .enum(["production", "development", "test"], {
-      error: "production（開発時は development）を指定してください",
-    })
-    .default("production"),
-});
+const environmentSchema = z
+  .object({
+    POWER_MANAGER_CONFIG_PATH: absolutePath(),
+    POWER_MANAGER_PORT: portValue,
+    POWER_MANAGER_PUBLIC_ORIGIN: publicOriginValue,
+    POWER_MANAGER_AUTH_USERNAME: requiredString(),
+    POWER_MANAGER_AUTH_PASSWORD_HASH: passwordHashValue,
+    POWER_MANAGER_SSH_IDENTITY_FILE: absolutePath(),
+    POWER_MANAGER_SSH_KNOWN_HOSTS_FILE: absolutePath(),
+    NODE_ENV: z
+      .enum(["production", "development", "test"], {
+        error: "production（開発時は development）を指定してください",
+      })
+      .default("production"),
+  })
+  /**
+   * 単一の変数だけでは判定できない条件をここで検査する。
+   *
+   * 本番で `http://localhost` を Origin に指定できると、CSRF 検証の基準値が開発用のまま
+   * 動き、配備ミスを起動時に検出できない（NFR-06, `docs/security.md` 3.2）。
+   */
+  .superRefine((data, ctx) => {
+    if (data.NODE_ENV === "production" && data.POWER_MANAGER_PUBLIC_ORIGIN.startsWith("http:")) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["POWER_MANAGER_PUBLIC_ORIGIN"],
+        message: "本番（NODE_ENV=production）では HTTPS の URL を指定してください",
+      });
+    }
+  });
 
 /**
  * 検証エラーから、変数名と理由だけの 1 行メッセージを組み立てる。
