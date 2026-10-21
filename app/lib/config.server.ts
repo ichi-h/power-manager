@@ -137,17 +137,46 @@ function isValidArgon2idHash(value: string): boolean {
   return true;
 }
 
-const requiredMessage = { error: "設定されていません" };
-const emptyMessage = { message: "空です" };
+/** 検証メッセージ。同じ文言を複数箇所で使うため定数にする。 */
+const messages = {
+  required: "設定されていません",
+  empty: "空です",
+  portRange: "1 から 65535 の整数で指定してください",
+  absolutePath: "絶対パスを正規化した形で指定してください",
+  username: "英数字と . _ - だけを使い、64 文字以内で指定してください",
+  surroundingWhitespace: "前後に空白を含めないでください",
+} as const;
 
+/**
+ * 値が設定されていることを要求する。前後の空白は黙って落とさず拒否する。
+ * 環境変数ファイルの書き間違い（行末の空白、値を空にしたままの行）を検出するため。
+ */
 function requiredString() {
-  return z.string(requiredMessage).min(1, emptyMessage);
+  return z
+    .string({ error: messages.required })
+    .min(1, { message: messages.empty })
+    .refine((value) => value === value.trim(), {
+      message: messages.surroundingWhitespace,
+    });
 }
 
+/**
+ * 絶対パスを検証する。
+ *
+ * NUL バイトを含む値は後続の `fs` 呼び出しで値を含む例外メッセージを生み、
+ * `config_reload` の `reason` 経由でログに漏れる。`..` や `//` を含む値は
+ * 同じファイルを指す複数の表記を許し、設定の同一性を壊す。
+ */
 function absolutePath() {
-  return requiredString().refine((value) => path.isAbsolute(value), {
-    message: "絶対パスを指定してください",
-  });
+  return requiredString().refine(
+    (value) =>
+      path.isAbsolute(value) &&
+      !value.includes("\0") &&
+      // ルート直下の `/` だけは末尾スラッシュを許す。
+      (value === path.sep || !value.endsWith(path.sep)) &&
+      path.normalize(value) === value,
+    { message: messages.absolutePath },
+  );
 }
 
 /** Origin として正規化した結果。 */
@@ -209,15 +238,22 @@ function parsePublicOrigin(value: string): PublicOrigin | null {
   return null;
 }
 
+/**
+ * ポートを検証する。
+ *
+ * 先頭ゼロを拒む（`08080` を 8 進数風に黙って解釈しない）ため、先頭は 1-9 に限定する。
+ * 桁数を 5 桁に制限しておくと、巨大な数値による数値型の内部制約（英語メッセージ）が
+ * 先に発火しない。
+ */
 const portValue = requiredString()
-  .regex(/^\d+$/, { message: "1 から 65535 の整数で指定してください" })
+  .regex(/^[1-9]\d{0,4}$/, { message: messages.portRange })
   .transform((value) => Number(value))
   .pipe(
     z
       .number()
       .int()
-      .min(1, { message: "1 から 65535 の整数で指定してください" })
-      .max(65535, { message: "1 から 65535 の整数で指定してください" }),
+      .min(1, { message: messages.portRange })
+      .max(65535, { message: messages.portRange }),
   );
 
 const publicOriginMessage =
@@ -236,6 +272,16 @@ const publicOriginValue = requiredString().transform((value, ctx) => {
   return parsed;
 });
 
+/**
+ * Basic 認証のユーザー名。
+ *
+ * `:` を含むと「最初の `:` で分割する」解析で永久にログインできず、制御文字や長大な値も
+ * 無意味に受理されるため、文字種と長さを限定する。
+ */
+const usernameValue = requiredString().regex(/^[A-Za-z0-9._-]{1,64}$/, {
+  message: messages.username,
+});
+
 const passwordHashValue = requiredString().refine(isValidArgon2idHash, {
   message:
     "Argon2id のハッシュ（$argon2id$v=..$m=..,t=..,p=..$salt$hash、m=19456-262144, t=2-10, p=1-4）を指定してください",
@@ -247,22 +293,28 @@ const passwordHashValue = requiredString().refine(isValidArgon2idHash, {
  * 検証は「値の形式」に限る。外部資源の存在確認（`ssh` 実行ファイル、秘密鍵、
  * 管理対象 JSON）は起動要件に含めない。Nix の配置と手動配置の両方を許容し、
  * 起動要件を環境変数の検証だけに限定するためである。
+ *
+ * `loadRuntimeConfig` はこのキーだけを環境から抜き出して
+ * から検証する。未知の変数の値がエラー経路（issue の `input` 等）へ入る余地を残さない
+ * （SEC-05）。
  */
+const environmentShape = {
+  POWER_MANAGER_CONFIG_PATH: absolutePath(),
+  POWER_MANAGER_PORT: portValue,
+  POWER_MANAGER_PUBLIC_ORIGIN: publicOriginValue,
+  POWER_MANAGER_AUTH_USERNAME: usernameValue,
+  POWER_MANAGER_AUTH_PASSWORD_HASH: passwordHashValue,
+  POWER_MANAGER_SSH_IDENTITY_FILE: absolutePath(),
+  POWER_MANAGER_SSH_KNOWN_HOSTS_FILE: absolutePath(),
+  NODE_ENV: z
+    .enum(["production", "development", "test"], {
+      error: "production（開発時は development）を指定してください",
+    })
+    .default("production"),
+};
+
 const environmentSchema = z
-  .object({
-    POWER_MANAGER_CONFIG_PATH: absolutePath(),
-    POWER_MANAGER_PORT: portValue,
-    POWER_MANAGER_PUBLIC_ORIGIN: publicOriginValue,
-    POWER_MANAGER_AUTH_USERNAME: requiredString(),
-    POWER_MANAGER_AUTH_PASSWORD_HASH: passwordHashValue,
-    POWER_MANAGER_SSH_IDENTITY_FILE: absolutePath(),
-    POWER_MANAGER_SSH_KNOWN_HOSTS_FILE: absolutePath(),
-    NODE_ENV: z
-      .enum(["production", "development", "test"], {
-        error: "production（開発時は development）を指定してください",
-      })
-      .default("production"),
-  })
+  .object(environmentShape)
   /**
    * 単一の変数だけでは判定できない条件をここで検査する。
    *
@@ -301,13 +353,21 @@ function describeIssues(error: z.ZodError): string {
   return `環境変数が不正です（${parts.join(" / ")}）`;
 }
 
-/**
- * 環境変数を検証して実行時設定を返す。1 つでも不正なら `ConfigurationError` を投げる。
- */
+/** スキーマが求める変数だけを環境から抜き出す。 */
+function pickEnvironment(
+  env: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  const picked: Record<string, string | undefined> = {};
+  for (const name of Object.keys(environmentShape)) {
+    picked[name] = env[name];
+  }
+  return picked;
+}
+
 export function loadRuntimeConfig(
   env: Record<string, string | undefined> = process.env,
 ): RuntimeConfig {
-  const parsed = environmentSchema.safeParse(env);
+  const parsed = environmentSchema.safeParse(pickEnvironment(env));
   if (!parsed.success) throw new ConfigurationError(describeIssues(parsed.error));
 
   return {

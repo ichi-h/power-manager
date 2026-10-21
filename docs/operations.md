@@ -6,16 +6,28 @@
 
 アプリケーションは CLI 引数を受け取らない。次の環境変数がすべて存在し妥当でなければ起動に失敗する（NFR-06）。
 
-| 環境変数                             | 用途                                          | 検証                                        |
-| ------------------------------------ | --------------------------------------------- | ------------------------------------------- |
-| `POWER_MANAGER_CONFIG_PATH`          | 管理対象 JSON の絶対パス                      | 絶対パス、非空                              |
-| `POWER_MANAGER_PORT`                 | loopback HTTP の待受ポート                    | 整数 `1`–`65535`                            |
-| `POWER_MANAGER_PUBLIC_ORIGIN`        | CSRF 検証に使う外部 Origin                    | HTTPS、開発時のみ `http://localhost[:port]` |
-| `POWER_MANAGER_AUTH_USERNAME`        | Basic 認証のユーザー名                        | 非空                                        |
-| `POWER_MANAGER_AUTH_PASSWORD_HASH`   | Argon2id パスワードハッシュ                   | `$argon2id$` で始まる                       |
-| `POWER_MANAGER_SSH_IDENTITY_FILE`    | SSH 専用秘密鍵の絶対パス                      | 絶対パス                                    |
-| `POWER_MANAGER_SSH_KNOWN_HOSTS_FILE` | SSH 接続先を検証する `known_hosts` の絶対パス | 絶対パス                                    |
-| `NODE_ENV`                           | 実行モード                                    | `production` 固定（本番）                   |
+| 環境変数                             | 用途                                          | 検証                                                                       |
+| ------------------------------------ | --------------------------------------------- | -------------------------------------------------------------------------- |
+| `POWER_MANAGER_CONFIG_PATH`          | 管理対象 JSON の絶対パス                      | 絶対パス、前後の空白なし、`..`・`//`・末尾 `/` を含まない正規形、NUL なし   |
+| `POWER_MANAGER_PORT`                 | loopback HTTP の待受ポート                    | `1`–`65535` の 10 進整数（先頭ゼロ・符号・小数・空白なし）                 |
+| `POWER_MANAGER_PUBLIC_ORIGIN`        | CSRF 検証に使う外部 Origin                    | HTTPS、開発時のみ `http://localhost[:port]`、パス・資格情報・`*` を含まない |
+| `POWER_MANAGER_AUTH_USERNAME`        | Basic 認証のユーザー名                        | `[A-Za-z0-9._-]` のみ、64 文字以内、前後の空白なし                          |
+| `POWER_MANAGER_AUTH_PASSWORD_HASH`   | Argon2id パスワードハッシュ                   | `$argon2id$v=..$m=..,t=..,p=..$salt$hash`、パラメータは下表の範囲           |
+| `POWER_MANAGER_SSH_IDENTITY_FILE`    | SSH 専用秘密鍵の絶対パス                      | 絶対パス、前後の空白なし、正規形、NUL なし                                  |
+| `POWER_MANAGER_SSH_KNOWN_HOSTS_FILE` | SSH 接続先を検証する `known_hosts` の絶対パス | 絶対パス、前後の空白なし、正規形、NUL なし                                  |
+| `NODE_ENV`                           | 実行モード                                    | `production` 固定（本番）                                                  |
+
+値は前後の空白を落として解釈しない。`FOO=bar ` のような行末空白は設定ミスとして起動時に拒否する。
+
+パスワードハッシュのパラメータ範囲:
+
+| パラメータ | 範囲            | 理由                                                     |
+| ---------- | --------------- | -------------------------------------------------------- |
+| `m`        | 19456–262144    | 弱すぎる設定は総当たり可能、過大な指定は認証毎にメモリを枯渇させる |
+| `t`        | 2–10            | 同上                                                     |
+| `p`        | 1–4             | 同上                                                     |
+
+ソルトは 16 バイト以上、ハッシュは 32 バイト以上を要求する。`node-argon2` は `m,p,t` の順で出力するが、検証はパラメータの順序に依存しない。
 
 環境変数を変更した場合は systemd サービスの再起動が必要である。再読込操作の対象は管理対象 JSON のみ（NFR-13）。
 

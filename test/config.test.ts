@@ -68,14 +68,38 @@ describe("実行時設定", () => {
 });
 
 describe("ポート", () => {
-  test.each(["0", "65536", "abc", "8080.5", "-1", " 8080"])(
-    "範囲外・不正なポート %s を拒否する",
-    (value) => {
-      expect(() =>
-        loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_PORT: value }),
-      ).toThrow(/POWER_MANAGER_PORT/);
-    },
-  );
+  test.each([
+    "0",
+    "65536",
+    "abc",
+    "8080.5",
+    "-1",
+    " 8080",
+    "8080\n",
+    "+8080",
+    "1e3",
+    // 先頭ゼロは 8 進数風の指定として黙って解釈しない。
+    "08080",
+    "00",
+    "000",
+    // 桁あふれは英語の内部メッセージを混ぜずに拒否する。
+    "100000000000000000000",
+    // 全角数字は数値として解釈しない。
+    "８０８０",
+  ])("範囲外・不正なポート %s を拒否する", (value) => {
+    expect(() =>
+      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_PORT: value }),
+    ).toThrow(/POWER_MANAGER_PORT/);
+  });
+
+  test("巨大な数値でも英語の内部メッセージを混ぜない", () => {
+    expect(() =>
+      loadRuntimeConfig({
+        ...validEnvironment(),
+        POWER_MANAGER_PORT: "100000000000000000000",
+      }),
+    ).toThrow(expect.objectContaining({ message: expect.not.stringContaining("Too big") }));
+  });
 
   test.each([
     ["1", 1],
@@ -251,5 +275,79 @@ describe("絶対パス", () => {
     expect(() => loadRuntimeConfig({ ...validEnvironment(), [name]: "relative/path" })).toThrow(
       new RegExp(name),
     );
+  });
+
+  test.each([
+    "/etc/power-manager/../power-manager/config.json",
+    "/etc//power-manager/config.json",
+    "/etc/power-manager/",
+    "/etc/power-manager/config.json ",
+    "/etc/power-manager/\0config.json",
+  ])("正規化されていないパス %j を拒否する", (value) => {
+    expect(() =>
+      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_CONFIG_PATH: value }),
+    ).toThrow(/POWER_MANAGER_CONFIG_PATH/);
+  });
+
+  test("NUL バイトを含むパスの拒否メッセージに値を含めない", () => {
+    expect(() =>
+      loadRuntimeConfig({
+        ...validEnvironment(),
+        POWER_MANAGER_CONFIG_PATH: "/etc/\0secret.json",
+      }),
+    ).toThrow(expect.objectContaining({ message: expect.not.stringContaining("secret") }));
+  });
+});
+
+describe("ユーザー名", () => {
+  test.each([
+    "admin:password",
+    "admin user",
+    "admin\tuser",
+    "管理者",
+    "a".repeat(65),
+  ])("Basic 認証で扱えない %j を拒否する", (value) => {
+    expect(() =>
+      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_AUTH_USERNAME: value }),
+    ).toThrow(/POWER_MANAGER_AUTH_USERNAME/);
+  });
+
+  test.each(["a", "admin", "admin.user-name_1", "a".repeat(64)])(
+    "有効なユーザー名 %j を受け付ける",
+    (value) => {
+      expect(
+        loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_AUTH_USERNAME: value })
+          .authUsername,
+      ).toBe(value);
+    },
+  );
+});
+
+describe("空白", () => {
+  test.each(["  ", " admin", "admin "])("前後空白を含むユーザー名 %j を拒否する", (value) => {
+    expect(() =>
+      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_AUTH_USERNAME: value }),
+    ).toThrow(/POWER_MANAGER_AUTH_USERNAME/);
+  });
+});
+
+describe("未知の環境変数", () => {
+  test("検証対象外の変数を無視する", () => {
+    const runtime = loadRuntimeConfig({
+      ...validEnvironment(),
+      AWS_SECRET_ACCESS_KEY: "leaked-secret",
+    });
+
+    expect(runtime.port).toBe(8080);
+  });
+
+  test("検証対象外の変数の値をエラーメッセージに含めない", () => {
+    expect(() =>
+      loadRuntimeConfig({
+        ...validEnvironment(),
+        POWER_MANAGER_PORT: "not-a-port",
+        AWS_SECRET_ACCESS_KEY: "leaked-secret",
+      }),
+    ).toThrow(expect.objectContaining({ message: expect.not.stringContaining("leaked-secret") }));
   });
 });
