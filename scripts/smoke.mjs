@@ -19,6 +19,13 @@ const timeoutMilliseconds = 30_000;
 /** 不正な設定の子プロセスを待つ上限。待受を開始しないので、長く待つ意味がない。 */
 const invalidExitMilliseconds = 5_000;
 /**
+ * スモークテスト用の Basic 認証情報（SEC-01）。
+ * `runtimeEnvironment.POWER_MANAGER_AUTH_PASSWORD_HASH` の平文。
+ * 本番の資匿情報とは無関係の、テスト専用の値である。
+ */
+const smokeUsername = "smoke";
+const smokePassword = "smoke-password";
+/**
  * 既存のファイルを指せばよい環境変数（秘密鍵・`known_hosts`）の代用。
  * これらは起動時にパスの形式だけを見る。
  */
@@ -77,12 +84,16 @@ const runtimeEnvironment = {
   POWER_MANAGER_CONFIG_PATH: managedConfigPath,
   POWER_MANAGER_PORT: String(port),
   POWER_MANAGER_PUBLIC_ORIGIN: `https://${host}`,
-  POWER_MANAGER_AUTH_USERNAME: "smoke",
+  POWER_MANAGER_AUTH_USERNAME: smokeUsername,
+  // 平文: smoke-password（スモークテスト専用値。上の smokePassword 参照）
   POWER_MANAGER_AUTH_PASSWORD_HASH:
-    "$argon2id$v=19$m=65536,t=2,p=1$CJ2eRzv21JkRoWJAsIi8Yg$1RMRv11PXAK8o6m5v5SYM4+6Lehh35Iw3CPNNvkuSqM",
+    "$argon2id$v=19$m=19456,p=1,t=2$JlZNKAM26Uz/G7BAI3Jzjw$JCl5X7Ttck+HDOKLF/95sbAOWVJ9AbLJS5Xf2txJAlc",
   POWER_MANAGER_SSH_IDENTITY_FILE: existingFile,
   POWER_MANAGER_SSH_KNOWN_HOSTS_FILE: existingFile,
 };
+
+/** Basic 認証ヘッダーの値（SEC-01）。`Authorization: Basic <base64(username:password)>`。 */
+const smokeAuthorization = `Basic ${btoa(`${smokeUsername}:${smokePassword}`)}`;
 
 /**
  * 子プロセスへ渡す環境変数。
@@ -148,7 +159,26 @@ async function waitForStarted() {
       throw new Error(`サーバーが起動前に終了しました (exit ${child.exitCode})\n${captured.stderr}`);
     }
     try {
-      const response = await fetch(`http://${host}/`, { redirect: "manual" });
+      // 認証なしの要求は 401（SEC-01）。
+      const unauthenticated = await fetch(`http://${host}/`, { redirect: "manual" });
+      await unauthenticated.body?.cancel();
+      if (unauthenticated.status !== 401) {
+        throw new Error(`認証なしの GET / が ${unauthenticated.status} を返しました`);
+      }
+      const challenge = unauthenticated.headers.get("www-authenticate");
+      if (challenge !== 'Basic realm="power-manager"') {
+        throw new Error(`WWW-Authenticate が不正でした: ${challenge}`);
+      }
+      // `/healthz` は認証免除の死活監視（SEC-10）。
+      const healthz = await fetch(`http://${host}/healthz`, { redirect: "manual" });
+      const healthzBody = await healthz.text();
+      if (healthz.status !== 200 || healthzBody !== "ok") {
+        throw new Error(`GET /healthz が ${healthz.status} (${healthzBody}) を返しました`);
+      }
+      const response = await fetch(`http://${host}/`, {
+        redirect: "manual",
+        headers: { authorization: smokeAuthorization },
+      });
       const body = await response.text();
       if (response.status !== 200) throw new Error(`GET / が ${response.status} を返しました`);
       if (!response.headers.get("content-type")?.includes("text/html")) {
