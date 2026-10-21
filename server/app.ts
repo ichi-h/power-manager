@@ -10,17 +10,25 @@
 import { createRequestListener } from "@react-router/node";
 import { RouterContextProvider, type ServerBuild } from "react-router";
 
-import { configContext, type RuntimeConfig } from "../app/lib/config.server.ts";
+import {
+  configContext,
+  toPublicRuntimeConfig,
+  type RuntimeConfig,
+} from "../app/lib/config.server.ts";
 import { logRequestFailure } from "./log.ts";
 
 export type { RuntimeConfig };
 
 /**
  * loader/action へ渡す load context を組み立てる。
+ *
+ * 載せるのは公開値だけである。`authPasswordHash` などの秘密値は load context に置かず、
+ * 認証ミドルウェア（`t004`）が起動時の設定から直接読む。load context は全 loader/action
+ * から到達できるため、型で到達不能にしておく（SEC-05）。
  */
 export function createLoadContext(runtime: RuntimeConfig): RouterContextProvider {
   const context = new RouterContextProvider();
-  context.set(configContext, runtime);
+  context.set(configContext, toPublicRuntimeConfig(runtime));
   return context;
 }
 

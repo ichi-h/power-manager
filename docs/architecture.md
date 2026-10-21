@@ -100,7 +100,8 @@ const listener = createRequestListener({
   mode: "production",
   getLoadContext: () => {
     const context = new RouterContextProvider();
-    context.set(configContext, loadRuntimeConfig());
+    // 載せるのは公開値だけ（秘密値は認証ミドルウェアが直接読む）。
+    context.set(configContext, toPublicRuntimeConfig(loadRuntimeConfig()));
     return context;
   },
 });
@@ -110,9 +111,9 @@ server.listen(port, "127.0.0.1");
 ```
 
 - `getLoadContext` は v8 では `RouterContextProvider` を返す（プレーンオブジェクトを返す例は v6/v7 のもの）。loader/action からは `context.get(configContext)` で参照する。
-- `configContext` は `globalThis` 上の単一スロットに置く。`build/server/index.js`（ルート側）と自前エントリのバンドルは別のモジュールグラフであり、モジュールスコープで `createContext()` すると実体が 2 つになって `context.get` が失敗する。`RouterContextProvider` はキーをオブジェクト同一性で照合するため、この共有が要る。
-- 未捕捉の例外は `build.entry.module.handleError` を差し替えて処理する（7.1 の `request_failed`）。`createRequestListener` は `handleError` を受け付けないため、ビルドを浅くコピーして差し替える。
 - `configContext` は `globalThis` の 1 スロットから取る。`react-router build` の成果物（`build/server/index.js`）と自前エントリのバンドルは別のモジュールグラフになり、モジュールスコープで `createContext()` すると同じ名前でも実体が 2 つになる。`RouterContextProvider` はキーをオブジェクト同一性で照合するため、実体が分かれると「No value found for context」で 500 になる。`app/lib/config.server.ts` の `configContext` が唯一の情報源で、loader/action は `requireRuntimeConfig(context)` 経由で読む（未設定なら配線不整合と分かるメッセージで失敗する）。
+- load context に載せるのは公開値（`PublicRuntimeConfig`）だけである。`authPasswordHash` などの秘密値は `AuthConfig` / `SshConfig` に分け、`server/app.ts` の `createLoadContext` が `toPublicRuntimeConfig` で絞り込む。load context は全 loader/action から到達できるため、秘密値を同じ型に同居させると各 loader の実装規律だけが防御になる（SEC-05）。`nodeEnv` は起動時の検証にだけ使い、ドメイン層の型・関数へは渡さない。
+- 未捕捉の例外は `build.entry.module.handleError` を差し替えて処理する（7.1 の `request_failed`）。`createRequestListener` は `handleError` を受け付けないため、ビルドを浅くコピーして差し替える。
 - 仮画面の `/` も loader で `requireRuntimeConfig` を呼ぶ。起動して 1 ページ返すだけで、2 つのモジュールグラフが同じキーを共有していることを確認できる（`npm run smoke` が本番ビルドに対して検証する）。
 - ストリーミングは Web 標準の `ReadableStream` をそのまま流す。
 - SIGTERM/SIGINT では `server.close()` → スケジューラ停止 → リングバッファの書き出し（何もしない）→ `process.exit(0)`。5 秒で強制終了するタイマーを `unref()` 付きで併設する。

@@ -17,14 +17,17 @@ import { z } from "zod";
 export type NodeEnvironment = "production" | "development" | "test";
 
 /**
- * 検証済みの実行時設定。秘密値もここに含まれるため、画面・ログへ出力しない（SEC-05）。
+ * 画面・loader・action へ渡してよい公開値。
  *
- * `sshIdentityFile` と `sshKnownHostsFile` は「パスの検証だけ」を起動要件にする。
- * `ssh` 実行ファイルの存在や鍵の実在・権限は起動時に見ない（`docs/architecture.md` 3.2）。
- * `ssh` の不在は停止操作の実行時に `ssh_unavailable` として検出する。
+ * 秘密値を含めないのは型で担保する。load context は全 loader/action から到達できるため、
+ * 秘密値を同じ型に同居させると「各 loader が出力しない」という実装規律だけが防御になる
+ * （SEC-05）。秘密値は `AuthConfig` / `SshConfig` に分ける。
  */
-export type RuntimeConfig = {
-  /** 管理対象 JSON の絶対パス。 */
+export type PublicRuntimeConfig = {
+  /**
+   * 管理対象 JSON の絶対パス。
+   * パス自体は秘密ではないが、画面へ出す必要もないため loader では使わない想定。
+   */
   configPath: string;
   /** loopback HTTP の待受ポート。 */
   port: number;
@@ -36,16 +39,45 @@ export type RuntimeConfig = {
    * `publicOrigin`（スキーム付き）とは別に保持する。
    */
   publicOriginHost: string;
+  /**
+   * 配備モード。
+   *
+   * 起動時の検証（本番で HTTP を拒否する等）のためだけに持ち、ドメイン層の型・関数へは
+   * 渡さない。`NODE_ENV` は配備の都合を表す値であり、電源操作の判断材料ではない。
+   */
+  nodeEnv: NodeEnvironment;
+};
+
+/**
+ * 認証の秘密値。load context ではなく、認証ミドルウェア（`t004`）だけが読む。
+ */
+export type AuthConfig = {
   /** Basic 認証のユーザー名。 */
   authUsername: string;
   /** Basic 認証のパスワードハッシュ（Argon2id）。 */
   authPasswordHash: string;
+};
+
+/**
+ * SSH 停止のための設定。
+ *
+ * `sshIdentityFile` と `sshKnownHostsFile` は「パスの検証だけ」を起動要件にする。
+ * `ssh` 実行ファイルの存在や鍵の実在・権限は起動時に見ない（`docs/architecture.md` 3.2）。
+ * `ssh` の不在は停止操作の実行時に `ssh_unavailable` として検出する。
+ */
+export type SshConfig = {
   /** SSH 専用秘密鍵の絶対パス。 */
   sshIdentityFile: string;
   /** `known_hosts` の絶対パス。 */
   sshKnownHostsFile: string;
-  nodeEnv: NodeEnvironment;
 };
+
+/**
+ * 検証済みの実行時設定（全体）。起動時の配線だけが扱う。
+ *
+ * load context へ載せるのは `PublicRuntimeConfig` の部分だけである。
+ */
+export type RuntimeConfig = PublicRuntimeConfig & AuthConfig & SshConfig;
 
 /**
  * 検証済みの実行時設定を loader/action へ渡すためのキー。
@@ -64,22 +96,38 @@ export type RuntimeConfig = {
 const configContextSlot = "__powerManagerConfigContext";
 
 type ConfigContextRegistry = {
-  [configContextSlot]?: RouterContext<RuntimeConfig>;
+  [configContextSlot]?: RouterContext<PublicRuntimeConfig>;
 };
 
 const configContextRegistry = globalThis as unknown as ConfigContextRegistry;
 
-export const configContext: RouterContext<RuntimeConfig> = (configContextRegistry[
+/**
+ * 公開値だけを載せる。秘密値（`AuthConfig` / `SshConfig`）はここに入れない。
+ */
+export const configContext: RouterContext<PublicRuntimeConfig> = (configContextRegistry[
   configContextSlot
-] ??= createContext<RuntimeConfig>());
+] ??= createContext<PublicRuntimeConfig>());
 
 /**
- * load context から実行時設定を読む。
+ * 公開値だけを取り出す。load context へ載せる範囲をこの関数で固定する。
+ */
+export function toPublicRuntimeConfig(runtime: RuntimeConfig): PublicRuntimeConfig {
+  return {
+    configPath: runtime.configPath,
+    port: runtime.port,
+    publicOrigin: runtime.publicOrigin,
+    publicOriginHost: runtime.publicOriginHost,
+    nodeEnv: runtime.nodeEnv,
+  };
+}
+
+/**
+ * load context から公開値を読む。
  *
  * 未設定ならフレームワークの汎用メッセージではなく、配線不整合だと分かるエラーにする。
  * 本番でここに来るのは、`getLoadContext` を通らない経路を作った場合だけである。
  */
-export function requireRuntimeConfig(context: RouterContextProviderLike): RuntimeConfig {
+export function requireRuntimeConfig(context: RouterContextProviderLike): PublicRuntimeConfig {
   try {
     return context.get(configContext);
   } catch {

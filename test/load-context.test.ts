@@ -15,7 +15,14 @@ describe("load context", () => {
     const runtime = loadRuntimeConfig(validEnvironment());
     const context = createLoadContext(runtime);
 
-    expect(context.get(configContext)).toBe(runtime);
+    // load context に載るのは公開値だけ（秘密値は同じ型に存在しない）。
+    expect(context.get(configContext)).toEqual({
+      configPath: "/etc/power-manager/config.json",
+      port: 8080,
+      publicOrigin: "https://power.example.ts.net",
+      publicOriginHost: "power.example.ts.net",
+      nodeEnv: "production",
+    });
     expect(requireRuntimeConfig(context).configPath).toBe("/etc/power-manager/config.json");
     expect(requireRuntimeConfig(context).publicOrigin).toBe("https://power.example.ts.net");
     expect(requireRuntimeConfig(context).publicOriginHost).toBe("power.example.ts.net");
@@ -31,6 +38,25 @@ describe("load context", () => {
     const reloaded = await import("../app/lib/config.server.ts");
 
     expect(reloaded.configContext).toBe(configContext);
+  });
+
+  test("秘密値は load context から到達できない", () => {
+    const runtime = loadRuntimeConfig(validEnvironment());
+    const context = createLoadContext(runtime);
+    const publicConfig: Record<string, unknown> = { ...requireRuntimeConfig(context) };
+
+    // `AuthConfig` / `SshConfig` のキーが紛れ込んでいないことを、値の一致ではなく
+    // キーの集合で固定する（型で到達できないうえに、実行時にも載らない）。
+    expect(Object.keys(publicConfig).sort()).toEqual([
+      "configPath",
+      "nodeEnv",
+      "port",
+      "publicOrigin",
+      "publicOriginHost",
+    ]);
+    expect(JSON.stringify(publicConfig)).not.toContain(runtime.authPasswordHash);
+    expect(JSON.stringify(publicConfig)).not.toContain(runtime.sshIdentityFile);
+    expect(JSON.stringify(publicConfig)).not.toContain(runtime.authUsername);
   });
 
   test("設定を載せていない context からの参照は配線不整合と分かるエラーになる", () => {
