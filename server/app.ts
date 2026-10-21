@@ -35,7 +35,8 @@ import {
   type StatusChecker,
 } from "../app/lib/power.server.ts";
 import { operatorContext } from "../app/lib/operator-context.server.ts";
-import { statusCheckerContext } from "../app/routes/api.status.tsx";
+import { statusCheckerContext } from "../app/lib/status-checker-context.ts";
+import { sshRuntimeContext } from "../app/lib/ssh-runtime-context.server.ts";
 import { logRequestFailure } from "./log.ts";
 
 export type {
@@ -92,6 +93,11 @@ export function createLoadContext(
   context.set(historyContext, sharedHistory);
   // 電源操作器も同じく server-only の実体をここから載せる（FR-04〜FR-06, FR-11）。
   context.set(operatorContext, sharedOperator);
+  // SSH 停止の実行に必要なパス（秘密値ではない）。単体操作の action が読む。
+  context.set(sshRuntimeContext, {
+    sshIdentityFile: runtime.sshIdentityFile,
+    sshKnownHostsFile: runtime.sshKnownHostsFile,
+  });
   return context;
 }
 
