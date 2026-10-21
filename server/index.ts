@@ -17,9 +17,15 @@ import {
 import { createAppListener } from "./app.ts";
 import { serveStatic } from "./static.ts";
 
-/** 設定エラーを表す sysexits.h の EX_CONFIG。NixOS モジュールが再起動を抑止する。 */
+/**
+ * 設定エラーを表す sysexits.h の EX_CONFIG。NixOS モジュールの
+ * `RestartPreventExitStatus` が同じ値を再起動抑止に使う（`nix/module.nix`）。
+ */
 const configurationErrorExitCode = 78;
 const forcedExitMilliseconds = 5_000;
+
+/** 待受アドレスの不備として扱う `error.code`。設定変更で解消できるため再起動しても無駄になる。 */
+const listenAddressErrorCodes = new Set(["EADDRINUSE", "EACCES", "EINVAL"]);
 
 /**
  * 環境変数を検証し、失敗したら待受を開始せずに終了コード 78 で終了する（NFR-05, NFR-06）。
@@ -70,15 +76,28 @@ server.listen(runtime.port, "127.0.0.1", () => {
   console.log(JSON.stringify({ event: "started", port: runtime.port }));
 });
 
-server.on("error", (error) => {
+/**
+ * 待受の失敗を分類して終了する。
+ *
+ * 待受アドレスが使えない（使用中・権限なし・不正）場合は設定変更でしか解消できず、
+ * `Restart=on-failure` で再起動しても同じ失敗を繰り返すため、設定不備として終了コード 78 にする
+ * （NFR-05）。それ以外のソケットエラーは従来どおり終了コード 1 で再起動に委ねる。
+ *
+ * `server` の `error` は待受の前後にしか意味を持たない（待受成功後の接続の失敗は個々の
+ * リクエストエラーになる）ため、イベント名は `startup_failed` のままでよい。
+ */
+server.on("error", (error: NodeJS.ErrnoException) => {
+  const isListenAddressError =
+    error.code !== undefined && listenAddressErrorCodes.has(error.code);
+
   console.error(
     JSON.stringify({
       event: "startup_failed",
-      code: "operation_failed",
+      code: isListenAddressError ? "invalid_configuration" : "operation_failed",
       reason: error.message,
     }),
   );
-  process.exit(1);
+  process.exit(isListenAddressError ? configurationErrorExitCode : 1);
 });
 
 let shuttingDown = false;
