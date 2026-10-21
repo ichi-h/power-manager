@@ -13,6 +13,7 @@
 | フレームワーク      | React Router 8（Framework Mode、SSR 有効）                  | 1 プロセスで画面とサーバー処理を両立。loader/action とリソースルートが公式に使える            | FR-07, FR-14, NFR-09   |
 | ビルド              | Vite 7（React Router のビルド統合）                         | Framework Mode の標準。クライアント資産とサーバーバンドルを同時に生成                        | NFR-03                 |
 | 画面                | React 19 + JSX                                              | 行単位の進行表示・部分更新をフレームワークの再検証機構で実現                                 | FR-07, FR-14           |
+| スタイル            | Tailwind CSS 4（`@tailwindcss/vite`）                       | ユーティリティクラスで完結し、別途の CSS 設計やビルド工程を増やさない                       | NFR-11                 |
 | 画面遷移            | クライアントサイドルーティング                              | ページ全体の再読み込みを廃止（要件の中心）                                                   | FR-14                  |
 | 状態更新            | `fetcher.load()` によるリソースルートのポーリング            | ページ loader を再実行せず状態だけ更新する。`visibilitychange` で停止                        | FR-02, NFR-08          |
 | 入力検証            | Zod                                                         | スキーマによる厳格な検証（未知項目の拒否を含む）                                             | FR-09                  |
@@ -44,6 +45,7 @@
 | 対象側エージェント（自作 API）          | 対象ごとに導入が必要になる。既存 SSH で代替できる                                                                |
 | ICMP ping による死活確認                | raw socket 権限が必要で、SSH 到達性とも一致しない                                                                |
 | Docker コンテナ配備                     | NixOS モジュール + systemd hardening で足り、NixOS との統合もよい                                                |
+| CSS Modules・Sass などの別 CSS 基盤     | 画面数が少なくクラス設計の共有範囲が狭いため、ユーティリティクラスで十分。ビルド工程も増やさない                  |
 
 ## 2. 構成
 
@@ -129,6 +131,7 @@ server.listen(port, "127.0.0.1");
 | `server/index.ts`            | HTTP サーバー生成、待受、シグナル処理、終了コード                         |
 | `server/app.ts`              | `createRequestListener` の組立て、load context、起動時設定読込み           |
 | `app/root.tsx`               | レイアウト、認証ミドルウェアの適用、エラーバウンダリ                       |
+| `app/app.css`                | Tailwind CSS の読込みと、配色・フォントなどのテーマトークン定義            |
 | `app/routes.ts`              | ルート定義                                                                 |
 | `app/routes/dashboard.tsx`   | 一覧画面（loader で一覧と状態、action で単体・一括操作）                   |
 | `app/routes/settings.tsx`    | 定義の表示と再読込（読み取り専用）                                         |
@@ -143,6 +146,8 @@ server.listen(port, "127.0.0.1");
 | `app/lib/history.server.ts`  | 直近 100 件のリングバッファ                                               |
 
 外部依存は `react-router`、`@react-router/node`、`react`、`react-dom`、`zod`、`argon2`（Argon2id 検証）に限定する。UDP/TCP/子プロセスは `node:dgram`、`node:net`、`node:child_process` を使う。
+
+ビルド時のみ Tailwind CSS（`tailwindcss`、`@tailwindcss/vite`）を devDependency として使う。ビルド時に CSS を生成するだけで、実行時のサーバー依存は増えない。スタイルは各コンポーネントのユーティリティクラスに直接記述し、共通の配色・フォントだけを `app/app.css` の `@theme` で定義する。明暗の切り替えは `color-scheme` と CSS のシステム色（`Canvas` / `CanvasText`）に委ねる。
 
 ## 4. HTTP インターフェース
 

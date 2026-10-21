@@ -31,9 +31,9 @@ export function Layout({ children }: { children: ReactNode }) {
 
 export default function Root() {
   return (
-    <main className="page">
-      <header className="page-header">
-        <h1>power-manager</h1>
+    <main className="mx-auto max-w-4xl px-4 pt-6 pb-12">
+      <header>
+        <h1 className="mb-6 text-2xl font-bold">power-manager</h1>
       </header>
       <Outlet />
     </main>
@@ -48,12 +48,15 @@ export function ErrorBoundary() {
   const status = isRouteErrorResponse(error) ? error.status : 500;
 
   return (
-    <main className="page">
-      <header className="page-header">
-        <h1>power-manager</h1>
+    <main className="mx-auto max-w-4xl px-4 pt-6 pb-12">
+      <header>
+        <h1 className="mb-6 text-2xl font-bold">power-manager</h1>
       </header>
-      <section role="alert" className="error">
-        <h2>処理を完了できませんでした</h2>
+      <section
+        role="alert"
+        className="rounded-lg border border-current px-5 py-4"
+      >
+        <h2 className="mb-2 text-lg font-bold">処理を完了できませんでした</h2>
         <p>時間をおいて再度お試しください。（{status}）</p>
       </section>
     </main>

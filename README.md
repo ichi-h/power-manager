@@ -27,6 +27,8 @@ npm run smoke        # build 後に起動と HTML 応答を確認
 
 画面は React Router 8 の Framework Mode（SSR）で実装し、`app/` に画面とルート定義、`server/` に HTTP サーバーのエントリを置きます。
 
+スタイルは Tailwind CSS 4 のユーティリティクラスを JSX に直接記述し、配色・フォントなどの共通トークンだけを `app/app.css` の `@theme` で定義します。
+
 ## 設定
 
 起動には次の環境変数がすべて必要です。秘密値は環境ファイルに置き、リポジトリへ追加しないでください。
