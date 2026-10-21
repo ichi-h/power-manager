@@ -127,17 +127,21 @@ export type OperationResult = {
 /**
  * 画面に出す結果種別への畳み込み。
  *
- * `PowerResult` の `skipped` は「一括操作で running だったため飛ばした」を表し、単体操作の
- * `failed` + `busy`（実行中なので拒否した）とは意味が違う。画面ではそれぞれ
- * 「スキップ」「実行中（拒否）」と出し分ける（FR-07, FR-11）。
+ * `busy` は「実行中なので拒否した」を表す。単体操作の操作器は `skipped` + `busy` を返し、
+ * 一括操作や予約の `skipped` は「対象を飛ばした」を表す。分類（`code`）が `busy` のときだけ
+ * 「実行中（拒否）」とし、それ以外の `skipped` は「スキップ」と出し分ける（FR-07, FR-11）。
  */
 export function toResultKind(record: {
   readonly result: PowerOperationRecord['result'];
   readonly code: PowerOperationRecord['code'];
 }): OperationResultKind {
   if (record.result === 'succeeded') return 'succeeded';
-  if (record.result === 'skipped') return 'skipped';
+  // 単体操作の busy は操作器が `{ result: 'skipped', code: 'busy' }` を返す
+  // (`app/routes/dashboard.tsx` の action が受ける `PowerOperationRecord`)。`skipped` は
+  // 一括操作で実行中の対象を飛ばした意味であり、単体操作の拒否とは表示区分が違うため、
+  // `code === 'busy'` を `result === 'skipped'` より先に判定する (FR-07)。
   if (record.code === 'busy') return 'rejected';
+  if (record.result === 'skipped') return 'skipped';
   return 'failed';
 }
 
