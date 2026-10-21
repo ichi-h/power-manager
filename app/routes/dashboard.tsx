@@ -223,7 +223,9 @@ export async function action({ request, context }: Route.ActionArgs) {
 /**
  * 一括操作の action（FR-11）。
  *
- * `scope` は全台一括の `all` か、グループ ID。対象集合は `resolveBatchTargets` で
+ * `scopeKind` は `all`（全台一括）か `group`（グループ一括）、`scopeKind=group` のときは
+ * `scopeId` にグループ ID を受ける。種別と ID を分けるのは、グループ ID に `all` を
+ * 定義でき、`scope` 1 つの文字列では全台一括と区別できないためである。対象集合は `resolveBatchTargets` で
  * 確定して ID で重複排除する（1 台 1 回）。結果は単体操作と同じ規則で畳み込み、
  * 対象ごとの結果と要約 `{ ok, failed, skipped }` を返す。部分失敗は全体の失敗に
  * 読み替えず、常に 200 で返す（実行できなかったことは要約と対象ごとの結果で示す）。
@@ -234,16 +236,23 @@ async function runBatch(
   operation: PowerOperation,
 ): Promise<Response> {
   const config = requireConfigStore(context).current();
-  const rawScope = form.get('scope');
-  if (typeof rawScope !== 'string' || rawScope.length === 0) {
-    return badRequest();
-  }
+  const rawScopeKind = form.get('scopeKind');
+  const rawScopeId = form.get('scopeId');
 
+  // 対象範囲は種別（`all` / `group`）と ID を別の項目で受ける。1 つの文字列にまとめると、
+  // グループ ID の `all` と全台一括が区別できず、利用者が選んだグループではなく全台が
+  // 対象になる（破壊的操作の対象取り違え）。
   let scope: BatchOperationScope;
-  if (rawScope === 'all') {
+  if (rawScopeKind === 'all') {
     scope = { type: 'all' };
-  } else if (config.groups.some((group) => group.id === rawScope)) {
-    scope = { type: 'group', id: rawScope };
+  } else if (rawScopeKind === 'group') {
+    if (typeof rawScopeId !== 'string' || rawScopeId.length === 0) {
+      return badRequest();
+    }
+    if (!config.groups.some((group) => group.id === rawScopeId)) {
+      return badRequest();
+    }
+    scope = { type: 'group', id: rawScopeId };
   } else {
     return badRequest();
   }
@@ -730,7 +739,8 @@ function RecentRow({ record }: { record: HistoryRecord }) {
 /**
  * 一括操作のボタンと結果表示（FR-11）。
  *
- * - 全台一括と、グループごとの一括で共通に使う。`scope` を hidden で送る。
+ * - 全台一括と、グループごとの一括で共通に使う。対象範囲は `scopeKind`（`all` / `group`）
+ *   と `scopeId`（グループ ID）を hidden で送る。
  * - 停止は対象の表示名を列挙した確認を 1 回だけ出し、拒否時は送信しない（SEC-07）。
  * - 結果は対象ごとの種別と「n 件成功 / m 件失敗 / k 件スキップ」の要約を出す。
  */
@@ -772,9 +782,12 @@ function BatchControls({
           <input type="hidden" name="intent" value={`${operation}-group`} />
           <input
             type="hidden"
-            name="scope"
-            value={scope.type === 'all' ? 'all' : scope.id}
+            name="scopeKind"
+            value={scope.type === 'all' ? 'all' : 'group'}
           />
+          {scope.type === 'group' ? (
+            <input type="hidden" name="scopeId" value={scope.id} />
+          ) : null}
           <button type="submit" disabled={running || targets.length === 0}>
             {scope.type === 'all' ? '全台' : 'グループ'}
             {operationLabels[operation]}

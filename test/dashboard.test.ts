@@ -289,7 +289,7 @@ describe('一覧画面の action', () => {
 describe('一括操作の action', () => {
   test('グループ一括は対象を ID で重複排除し、対象ごとの結果と要約を返す', async () => {
     const { operateAll, args } = actionArgs(
-      { intent: 'shutdown-group', scope: 'storage' },
+      { intent: 'shutdown-group', scopeKind: 'group', scopeId: 'storage' },
       {
         operateAll: async (_scope, operation, targets) => ({
           records: targets.map((target) => ({
@@ -330,9 +330,9 @@ describe('一括操作の action', () => {
     });
   });
 
-  test('全台一括は scope=all で全サーバーを対象にする', async () => {
+  test('全台一括は scopeKind=all で全サーバーを対象にする', async () => {
     const { operateAll, args } = actionArgs(
-      { intent: 'wake-group', scope: 'all' },
+      { intent: 'wake-group', scopeKind: 'all' },
       {
         operateAll: async () => ({
           records: [],
@@ -361,9 +361,47 @@ describe('一括操作の action', () => {
     ).toEqual(['nas', 'test-01']);
   });
 
+  test('グループ ID が all でも全台一括と取り違えず、グループの対象だけを操作する', async () => {
+    // グループ ID に予約語は無い（docs/operations.md 2.2）。文字列 1 つで範囲を受けると
+    // このグループの一括が全台一括になるため、種別と ID を分けて受ける。
+    const config = twoServerConfig();
+    // サーバー 2 台を定義し、2 台目だけをグループ all に所属させる。1 台目（nas）が
+    // 対象に混ざれば、グループ一括が全台一括として実行されたことになる。
+    const baseServers = config.servers as unknown as ReadonlyArray<
+      Record<string, unknown>
+    >;
+    config.servers = [
+      { ...baseServers[0], groups: ['storage'] },
+      { ...baseServers[1], groups: ['all'] },
+    ];
+    config.groups = [
+      { id: 'storage', name: 'ストレージ' },
+      { id: 'all', name: '全台と同名のグループ' },
+    ];
+
+    const { operateAll, args } = actionArgs(
+      { intent: 'shutdown-group', scopeKind: 'group', scopeId: 'all' },
+      { config },
+    );
+
+    const response = (await action(args)) as Response;
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { target: unknown };
+
+    expect(body.target).toEqual({ type: 'group', id: 'all' });
+    expect(operateAll).toHaveBeenCalledTimes(1);
+    expect(operateAll.mock.calls[0]?.[0]).toEqual({ type: 'group', id: 'all' });
+    // 全台（nas を含む）ではなく、グループ all に所属する test-01 だけが対象になる。
+    expect(
+      operateAll.mock.calls[0]?.[2].map(
+        (target: { readonly id: string }) => target.id,
+      ),
+    ).toEqual(['test-01']);
+  });
+
   test('busy の対象は skipped として要約に数える', async () => {
     const { args } = actionArgs(
-      { intent: 'shutdown-group', scope: 'test' },
+      { intent: 'shutdown-group', scopeKind: 'group', scopeId: 'test' },
       {
         operateAll: async (_scope, operation) => ({
           records: [
@@ -391,11 +429,16 @@ describe('一括操作の action', () => {
     expect(body.summary).toEqual({ ok: 0, failed: 0, skipped: 1 });
   });
 
-  test('未知のグループ・scope 欠落・未知の intent は操作せず 400 を返す', async () => {
+  test('未知のグループ・scopeKind/scopeId の欠落・未知の intent は操作せず 400 を返す', async () => {
     const cases: ReadonlyArray<Record<string, string | undefined>> = [
-      { intent: 'wake-group', scope: 'unknown-group' },
+      { intent: 'wake-group', scopeKind: 'group', scopeId: 'unknown-group' },
       { intent: 'shutdown-group' },
-      { intent: 'reboot-group', scope: 'all' },
+      { intent: 'reboot-group', scopeKind: 'all' },
+      // 種別が未知の値なら解釈しない（グループ ID の文字列を種別として受け取らない）。
+      { intent: 'wake-group', scopeKind: 'storage' },
+      // グループ一括で ID が無い／空なら対象を確定できない。
+      { intent: 'wake-group', scopeKind: 'group' },
+      { intent: 'wake-group', scopeKind: 'group', scopeId: '' },
     ];
 
     for (const fields of cases) {
@@ -412,7 +455,7 @@ describe('一括操作の action', () => {
     empty.servers = [];
     empty.groups = [];
     const { operateAll, args } = actionArgs(
-      { intent: 'wake-group', scope: 'all' },
+      { intent: 'wake-group', scopeKind: 'all' },
       { config: empty as never },
     );
 

@@ -104,6 +104,24 @@ describe('相互参照', () => {
     ).toEqual(['nas']);
   });
 
+  test('グループ ID の all は予約語ではなく、定義できて全台一括とも衝突しない', () => {
+    // 「全サーバー」はグループ ID の文字列ではなく種別で表す（docs/operations.md 2.2）。
+    const input = validConfig();
+    input.groups = [{ id: 'all', name: '全台と同名のグループ' }];
+    input.servers[0]!.groups = ['all'];
+
+    const parsed = parseManagedConfig(input);
+    expect(parsed.groups).toEqual([
+      { id: 'all', name: '全台と同名のグループ' },
+    ]);
+    // 対象集合の確定は種別で行うため、グループ all は全台にならない。
+    expect(
+      resolveBatchTargets(parsed.servers, { type: 'group', id: 'all' }).map(
+        (server) => server.id,
+      ),
+    ).toEqual(['nas']);
+  });
+
   test('サーバーを持たないグループを拒否する', () => {
     const input = validConfig();
     input.groups.push({ id: 'empty', name: '空のグループ' });

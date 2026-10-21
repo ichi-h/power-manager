@@ -453,7 +453,7 @@ describe('一括操作', () => {
     expect(screen.queryByRole('button', { name: 'グループ起動' })).toBeNull();
   });
 
-  test('グループ一括は scope にグループ ID を送る', async () => {
+  test('グループ一括は scopeKind=group と scopeId にグループ ID を送る', async () => {
     const onAction = vi.fn();
     renderDashboard(loaderData(), { onAction, action: () => batchResult() });
 
@@ -463,10 +463,11 @@ describe('一括操作', () => {
     await vi.waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
     const form = onAction.mock.calls[0]?.[0] as FormData;
     expect(form.get('intent')).toBe('wake-group');
-    expect(form.get('scope')).toBe('storage');
+    expect(form.get('scopeKind')).toBe('group');
+    expect(form.get('scopeId')).toBe('storage');
   });
 
-  test('全台一括は scope=all を送る', async () => {
+  test('全台一括は scopeKind=all を送り、scopeId は送らない', async () => {
     const onAction = vi.fn();
     renderDashboard(loaderData(), { onAction, action: () => batchResult() });
 
@@ -474,7 +475,8 @@ describe('一括操作', () => {
     await vi.waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
     const form = onAction.mock.calls[0]?.[0] as FormData;
     expect(form.get('intent')).toBe('wake-group');
-    expect(form.get('scope')).toBe('all');
+    expect(form.get('scopeKind')).toBe('all');
+    expect(form.get('scopeId')).toBeNull();
   });
 
   test('一括停止は対象の表示名を列挙した確認を 1 回だけ出し、拒否したら送信しない', async () => {
