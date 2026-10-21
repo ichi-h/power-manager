@@ -6,38 +6,16 @@
  */
 import { createRequestListener } from "@react-router/node";
 import { createContext, RouterContextProvider, type ServerBuild } from "react-router";
-import { z } from "zod";
 
-export type RuntimeConfig = {
-  port: number;
-};
+import type { RuntimeConfig } from "../app/lib/config.server.ts";
 
-/** loader/action から実行時設定を参照するためのキー。 */
-export const runtimeConfigContext = createContext<RuntimeConfig>();
-
-const port = z.coerce.number().int().min(1).max(65535);
+export type { RuntimeConfig };
 
 /**
- * 環境変数を検証して実行時設定を返す。不正なら例外を投げる。
+ * 検証済みの実行時設定を loader/action へ渡すためのキー。
+ * loader/action は `context.get(configContext)` で参照する。
  */
-export function loadRuntimeConfig(
-  env: Record<string, string | undefined> = process.env,
-): RuntimeConfig {
-  const parsed = z
-    .object({
-      POWER_MANAGER_PORT: port,
-    })
-    .safeParse(env);
-
-  if (!parsed.success) {
-    const keys = parsed.error.issues.map((issue) => issue.path.join(".")).join(", ");
-    throw new Error(`環境変数が不正です: ${keys}`);
-  }
-
-  return {
-    port: parsed.data.POWER_MANAGER_PORT,
-  };
-}
+export const runtimeConfigContext = createContext<RuntimeConfig>();
 
 /**
  * loader/action へ渡す load context を組み立てる。

@@ -2,14 +2,18 @@
  * HTTP サーバーのエントリポイント。
  *
  * 起動シーケンスのうち、ここでは待受とシグナル処理のみを扱う。
- * 環境変数・設定 JSON の検証と load context の組み立ては `server/app.ts` が担う。
+ * 環境変数の検証と load context の組み立ては `server/app.ts` / `app/lib/config.server.ts` が担う。
+ *
+ * CLI 引数は受け付けない（NFR-06）。設定は環境変数だけで渡す。
  */
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { createAppListener, loadRuntimeConfig } from "./app.ts";
+import { ConfigurationError, loadRuntimeConfig } from "../app/lib/config.server.ts";
+import { createAppListener } from "./app.ts";
 import { serveStatic } from "./static.ts";
 
+/** 設定エラーを表す sysexits.h の EX_CONFIG。NixOS モジュールが再起動を抑止する。 */
 const configurationErrorExitCode = 78;
 const forcedExitMilliseconds = 5_000;
 
@@ -17,11 +21,14 @@ let runtime;
 try {
   runtime = loadRuntimeConfig();
 } catch (error) {
+  if (!(error instanceof ConfigurationError)) throw error;
+
+  // 待受を開始する前に終了する。設定不備で再起動ループへ入らないようにする（NFR-05）。
   console.error(
     JSON.stringify({
       event: "startup_failed",
       code: "invalid_configuration",
-      reason: error instanceof Error ? error.message : "unknown",
+      reason: error.message,
     }),
   );
   process.exit(configurationErrorExitCode);
