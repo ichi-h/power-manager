@@ -129,22 +129,85 @@ export type OperationResult = {
 };
 
 /**
- * 一括操作の action が返す結果（FR-11）。
+ * 一括操作で対象 1 台分の結果（FR-11）。
  *
- * `results` は対象ごとの結果（単体操作と同じ規則で畳み込んだ種別）、`summary` は
+ * `OperationResult` に分類（`code`）を足した形である。`code` は内部の語彙であり、
+ * 画面では `skipReasonLabels` を通した日本語だけを出す（SEC-05）。
+ */
+export type BatchOperationItemResult = OperationResult & {
+  /** 実行しなかった理由（`skipped` のときだけ非 null）。 */
+  readonly code: PowerOperationRecord['code'];
+};
+
+/**
+ * 一括操作の action が成功時に返す結果（FR-11）。
+ *
+ * `results` は対象ごとの結果（単体操作と同じ規則で畳み込んだ種別と分類）、`summary` は
  * 「n 件成功 / m 件失敗 / k 件スキップ」の件数である。`target` は要求された範囲
  * （全台またはグループ ID）をそのまま返す。
  */
 export type BatchOperationResult = {
   readonly target: BatchOperationScope;
   readonly operation: PowerOperation;
-  readonly results: ReadonlyArray<OperationResult>;
+  readonly results: ReadonlyArray<BatchOperationItemResult>;
   readonly summary: {
     readonly ok: number;
     readonly failed: number;
     readonly skipped: number;
   };
 };
+
+/**
+ * 一括操作の action が失敗時に返す結果。
+ *
+ * 対象を確定できなかった（未知のグループ・対象 0 台・確認した集合との不一致）場合に
+ * 返す。`error` は画面が見分けるための機械可読な識別子で、`message` は利用者向けの
+ * 文言である。内部の例外文言は入れない（SEC-05）。
+ */
+export type BatchOperationFailure = {
+  readonly error: 'invalid_request' | 'targets_changed';
+  readonly message: string;
+};
+
+/** 一括操作の action の応答。成功と失敗を `error` の有無で判別する。 */
+export type BatchOperationResponse =
+  | BatchOperationResult
+  | BatchOperationFailure;
+
+/**
+ * 一括操作の応答が失敗かどうかを判定する。
+ *
+ * action は 400 でも本文を返すため、`fetcher.data` には成功の形と失敗の形のどちらも
+ * 入り得る（react-router は非 2xx の `Response` も `data` として扱う）。`summary` を
+ * 無検証で読むと、失敗応答で描画時に例外になる。
+ */
+export function isBatchOperationFailure(
+  value: unknown,
+): value is BatchOperationFailure {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as Partial<BatchOperationFailure>;
+  return typeof candidate.error === 'string';
+}
+
+/**
+ * 一括操作の応答が成功かどうかを判定する。
+ *
+ * 失敗の形（`error`）と取り違えないよう、要約と対象ごとの結果が揃っていることを
+ * 確かめる。失敗応答で `summary` を読むと描画時に例外になるため、画面はこの判定を
+ * 通った応答だけを描画する。
+ */
+export function isBatchOperationResult(
+  value: unknown,
+): value is BatchOperationResult {
+  if (typeof value !== 'object' || value === null) return false;
+  if (isBatchOperationFailure(value)) return false;
+  const candidate = value as Partial<BatchOperationResult>;
+  return (
+    Array.isArray(candidate.results) &&
+    typeof candidate.summary === 'object' &&
+    candidate.summary !== null
+  );
+}
 
 /**
  * 画面に出す結果種別への畳み込み。
@@ -247,18 +310,18 @@ async function runBatch(
     scope = { type: 'all' };
   } else if (rawScopeKind === 'group') {
     if (typeof rawScopeId !== 'string' || rawScopeId.length === 0) {
-      return badRequest();
+      return batchFailure(...invalidBatch);
     }
     if (!config.groups.some((group) => group.id === rawScopeId)) {
-      return badRequest();
+      return batchFailure(...invalidBatch);
     }
     scope = { type: 'group', id: rawScopeId };
   } else {
-    return badRequest();
+    return batchFailure(...invalidBatch);
   }
 
   const targets = resolveBatchTargets(config.servers, scope);
-  if (targets.length === 0) return badRequest();
+  if (targets.length === 0) return batchFailure(...invalidBatch);
 
   const outcome = await requireOperator(context).operateAll(
     scope,
@@ -274,6 +337,8 @@ async function runBatch(
       target: record.target.id,
       operation: record.operation,
       result: toResultKind(record, 'batch'),
+      // `skipped` の理由（`busy` など）を画面まで運ぶ（docs/architecture.md 6.4）。
+      code: record.code,
     })),
     summary: outcome.summary,
   };
@@ -285,6 +350,39 @@ async function runBatch(
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+    },
+  });
+}
+
+/**
+ * 一括操作を実行できなかったときの応答内容（状態コードは 400）。
+ *
+ * `batchFailure` に展開して渡すための組である。
+ */
+const invalidBatch = [
+  'invalid_request',
+  '対象を確定できませんでした。画面を再読み込みしてから操作し直してください。',
+  400,
+] as const;
+
+/**
+ * 一括操作を受け付けられなかった応答。
+ *
+ * `error` は画面が見分けるための識別子、`message` は利用者向けの文言である（内部の
+ * 例外文言は入れない）。一括の応答だけ union にするのは、画面が応答の形を検証して
+ * 失敗をメッセージ表示に落とせるようにするためである。
+ */
+function batchFailure(
+  error: BatchOperationFailure['error'],
+  message: string,
+  status: number,
+): Response {
+  const body: BatchOperationFailure = { error, message };
+  return new Response(JSON.stringify(body), {
+    status,
     headers: {
       'content-type': 'application/json; charset=utf-8',
       'cache-control': 'no-store',
@@ -753,10 +851,13 @@ function BatchControls({
   targets: ReadonlyArray<{ readonly id: string; readonly name: string }>;
   names: ReadonlyMap<string, string>;
 }) {
-  const fetcher = useFetcher<BatchOperationResult>();
+  const fetcher = useFetcher<BatchOperationResponse>();
   const running = fetcher.state !== 'idle';
   // 応答が前の要求のものかどうかは fetcher が持ち越さないため、直近の応答だけを出す。
+  // 400 の失敗応答も `fetcher.data` に入るため、形を検証してから描画する。
   const data = fetcher.data;
+  const failure = isBatchOperationFailure(data) ? data : null;
+  const succeeded = isBatchOperationResult(data) ? data : null;
 
   const submit = (
     event: FormEvent<HTMLFormElement>,
@@ -795,22 +896,30 @@ function BatchControls({
         </form>
       ))}
       {running ? <span role="status">一括実行中</span> : null}
-      {running || data === undefined ? null : (
+      {running || data === undefined ? null : failure !== null ? (
+        <div role="alert">
+          <p>{failure.message}</p>
+        </div>
+      ) : succeeded !== null ? (
         <div>
           <p>
-            {data.summary.ok} 件成功 / {data.summary.failed} 件失敗 /{' '}
-            {data.summary.skipped} 件スキップ
+            {succeeded.summary.ok} 件成功 / {succeeded.summary.failed} 件失敗 /{' '}
+            {succeeded.summary.skipped} 件スキップ
           </p>
           <ul>
-            {data.results.map((result) => (
+            {succeeded.results.map((result) => (
               <li key={result.target}>
                 {names.get(result.target) ?? result.target}:{' '}
                 {resultLabels[result.result]}
+                {/* 実行しなかった理由は語彙ではなく日本語で添える（docs/architecture.md 6.4）。 */}
+                {result.result === 'skipped' && result.code !== null
+                  ? `（${skipReasonLabels[result.code]}）`
+                  : null}
               </li>
             ))}
           </ul>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

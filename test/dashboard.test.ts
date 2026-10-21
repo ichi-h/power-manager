@@ -28,6 +28,8 @@ import { sshRuntimeContext } from '../app/lib/ssh-runtime-context.server.ts';
 import { statusCheckerContext } from '../app/lib/status-checker-context.ts';
 import {
   action,
+  isBatchOperationFailure,
+  isBatchOperationResult,
   loader,
   toReasonLabel,
   toResultKind,
@@ -310,8 +312,18 @@ describe('一括操作の action', () => {
       target: { type: 'group', id: 'storage' },
       operation: 'shutdown',
       results: [
-        { target: 'nas', operation: 'shutdown', result: 'succeeded' },
-        { target: 'test-01', operation: 'shutdown', result: 'succeeded' },
+        {
+          target: 'nas',
+          operation: 'shutdown',
+          result: 'succeeded',
+          code: null,
+        },
+        {
+          target: 'test-01',
+          operation: 'shutdown',
+          result: 'succeeded',
+          code: null,
+        },
       ],
       summary: { ok: 2, failed: 0, skipped: 0 },
     });
@@ -424,16 +436,20 @@ describe('一括操作の action', () => {
     };
     // 一括の busy は「拒否」ではなく「スキップ」と出す（FR-11）。
     expect(body.results).toEqual([
-      { target: 'test-01', operation: 'shutdown', result: 'skipped' },
+      {
+        target: 'test-01',
+        operation: 'shutdown',
+        result: 'skipped',
+        code: 'busy',
+      },
     ]);
     expect(body.summary).toEqual({ ok: 0, failed: 0, skipped: 1 });
   });
 
-  test('未知のグループ・scopeKind/scopeId の欠落・未知の intent は操作せず 400 を返す', async () => {
+  test('未知のグループ・scopeKind/scopeId の欠落は操作せず 400 を返す', async () => {
     const cases: ReadonlyArray<Record<string, string | undefined>> = [
       { intent: 'wake-group', scopeKind: 'group', scopeId: 'unknown-group' },
       { intent: 'shutdown-group' },
-      { intent: 'reboot-group', scopeKind: 'all' },
       // 種別が未知の値なら解釈しない（グループ ID の文字列を種別として受け取らない）。
       { intent: 'wake-group', scopeKind: 'storage' },
       // グループ一括で ID が無い／空なら対象を確定できない。
@@ -445,9 +461,25 @@ describe('一括操作の action', () => {
       const { operateAll, args } = actionArgs(fields);
       const response = (await action(args)) as Response;
       expect(response.status).toBe(400);
-      expect(await response.json()).toEqual({ error: 'invalid_request' });
+      // 一括の応答は成功と失敗の union にする。失敗形は `error` と利用者向けの
+      // `message` を持ち、画面はそれをメッセージ表示に使う。
+      expect(await response.json()).toEqual({
+        error: 'invalid_request',
+        message: expect.any(String),
+      });
       expect(operateAll).not.toHaveBeenCalled();
     }
+  });
+
+  test('一括でない intent は一括の実行経路に入らない', async () => {
+    // 種別が付いていても、一括の intent（`*-group`）でなければ単体操作として扱う。
+    const { operateAll, args } = actionArgs({
+      intent: 'reboot-group',
+      scopeKind: 'all',
+    });
+    const response = (await action(args)) as Response;
+    expect(response.status).toBe(400);
+    expect(operateAll).not.toHaveBeenCalled();
   });
 
   test('対象が 0 台の一括は操作せず 400 を返す', async () => {
@@ -461,7 +493,30 @@ describe('一括操作の action', () => {
 
     const response = (await action(args)) as Response;
     expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'invalid_request',
+      message: expect.any(String),
+    });
     expect(operateAll).not.toHaveBeenCalled();
+  });
+
+  test('成功応答と失敗応答を取り違えない（画面の型判定）', () => {
+    const success = {
+      target: { type: 'all' },
+      operation: 'wake',
+      results: [],
+      summary: { ok: 0, failed: 0, skipped: 0 },
+    };
+    expect(isBatchOperationResult(success)).toBe(true);
+    expect(isBatchOperationFailure(success)).toBe(false);
+
+    const failure = { error: 'invalid_request', message: '対象を確定できません' };
+    expect(isBatchOperationFailure(failure)).toBe(true);
+    // 失敗応答で要約を読むと描画時に例外になるため、成功と判定しない。
+    expect(isBatchOperationResult(failure)).toBe(false);
+    expect(isBatchOperationResult(undefined)).toBe(false);
+    expect(isBatchOperationResult(null)).toBe(false);
+    expect(isBatchOperationResult({ summary: null })).toBe(false);
   });
 });
 

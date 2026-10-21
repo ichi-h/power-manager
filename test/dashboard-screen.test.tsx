@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import Dashboard, {
   statusRefreshIntervalMs,
+  type BatchOperationFailure,
   type BatchOperationResult,
   type DashboardLoaderData,
   type OperationResult,
@@ -62,8 +63,9 @@ function renderDashboard(
     action?: () =>
       | OperationResult
       | BatchOperationResult
+      | BatchOperationFailure
       | Response
-      | Promise<OperationResult | BatchOperationResult>;
+      | Promise<OperationResult | BatchOperationResult | BatchOperationFailure>;
     onStatusLoad?: () => void;
     onHistoryLoad?: () => void;
     onLoad?: () => void;
@@ -418,8 +420,8 @@ describe('一括操作', () => {
       target: { type: 'all' },
       operation: 'wake',
       results: [
-        { target: 'nas', operation: 'wake', result: 'succeeded' },
-        { target: 'test-01', operation: 'wake', result: 'succeeded' },
+        { target: 'nas', operation: 'wake', result: 'succeeded', code: null },
+        { target: 'test-01', operation: 'wake', result: 'succeeded', code: null },
       ],
       summary: { ok: 2, failed: 0, skipped: 0 },
       ...overrides,
@@ -508,8 +510,8 @@ describe('一括操作', () => {
       action: () =>
         batchResult({
           results: [
-            { target: 'nas', operation: 'wake', result: 'succeeded' },
-            { target: 'test-01', operation: 'wake', result: 'skipped' },
+            { target: 'nas', operation: 'wake', result: 'succeeded', code: null },
+            { target: 'test-01', operation: 'wake', result: 'skipped', code: null },
           ],
           summary: { ok: 1, failed: 0, skipped: 1 },
         }),
@@ -521,6 +523,49 @@ describe('一括操作', () => {
     ).toBeDefined();
     expect(screen.getByText('NAS: 成功')).toBeDefined();
     expect(screen.getByText('検証機 01: スキップ')).toBeDefined();
+  });
+
+  test('スキップした対象には理由を日本語で添える', async () => {
+    renderDashboard(loaderData(), {
+      action: () =>
+        batchResult({
+          results: [
+            { target: 'nas', operation: 'wake', result: 'succeeded', code: null },
+            {
+              target: 'test-01',
+              operation: 'wake',
+              result: 'skipped',
+              code: 'busy',
+            },
+          ],
+          summary: { ok: 1, failed: 0, skipped: 1 },
+        }),
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: '全台起動' }));
+    expect(
+      await screen.findByText(
+        '検証機 01: スキップ（実行中のためスキップしました）',
+      ),
+    ).toBeDefined();
+    // 内部の語彙（code）は画面に出さない（SEC-05）。
+    expect(screen.queryByText(/busy/)).toBeNull();
+  });
+
+  test('失敗応答は要約ではなくメッセージを出す（描画で例外にならない）', async () => {
+    renderDashboard(loaderData(), {
+      action: () => ({
+        error: 'invalid_request' as const,
+        message:
+          '対象を確定できませんでした。画面を再読み込みしてから操作し直してください。',
+      }),
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: '全台起動' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('対象を確定できませんでした');
+    // 要約（成功/失敗/スキップ）は出さない。
+    expect(screen.queryByText(/件成功/)).toBeNull();
   });
 });
 
