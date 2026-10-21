@@ -33,12 +33,13 @@ describe('画面', () => {
       {
         path: '/',
         Component: Root,
-        // 描画だけを確かめるため、route が渡す props は `as never` で満たす。
         children: [
           {
             index: true,
-            // 描画だけを確かめるため、route が渡す props は使わず固定値で呼ぶ。
-            Component: () => Dashboard({ loaderData } as never),
+            // loader の戻り値がそのまま Component の props になる（配線も一緒に検証する）。
+            // 子ルートの props 型は `createStaticHandler` が推論できないため、型だけを
+            // 伏せる（実行時は `Dashboard` のまま。props は loader の戻り値が渡る）。
+            Component: Dashboard as never,
             loader: () => loaderData,
           },
         ],
@@ -54,7 +55,13 @@ describe('画面', () => {
     expect(html).toContain('power-manager');
     expect(html).toContain('サーバー一覧');
     // 一覧の行がサーバー側で描画される（スクリプト無効時も一覧が読める, NFR-09）。
-    expect(html).toContain('状態: <!-- -->オンライン');
+    // React の補間マーカー（`<!-- -->`）に依存しないよう、前後の語を別々に検査する。
+    expect(html).toContain('状態:');
+    expect(html).toContain('オンライン');
+    // loader の戻り値が行として描画される（loader→Component の配線も同時に検証する）。
+    expect(html).toContain('NAS');
+    expect(html).toContain('所属グループ:');
+    expect(html).toContain('ストレージ');
   });
 
   test('未知のパスは見つからない旨を表示する', () => {

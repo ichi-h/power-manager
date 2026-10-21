@@ -60,7 +60,7 @@ function record(
 function renderDashboard(
   data: DashboardLoaderData,
   options: {
-    action?: () => OperationResult | Response;
+    action?: () => OperationResult | Response | Promise<OperationResult>;
     onStatusLoad?: () => void;
     onHistoryLoad?: () => void;
     onLoad?: () => void;
@@ -141,10 +141,25 @@ beforeEach(() => {
   vi.spyOn(window, 'confirm').mockReturnValue(true);
 });
 
+/**
+ * 初期の \`document.visibilityState\`。テストで差し替えたものを毎回戻す。
+ *
+ * 戻さないと、後続のテストが非表示のまま実行され、順序依存の失敗になる。
+ */
+const initialVisibilityState = Object.getOwnPropertyDescriptor(
+  document,
+  'visibilityState',
+);
+
 afterEach(() => {
   cleanup();
-  vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.useRealTimers();
+  if (initialVisibilityState === undefined) {
+    delete (document as { visibilityState?: unknown }).visibilityState;
+  } else {
+    Object.defineProperty(document, 'visibilityState', initialVisibilityState);
+  }
 });
 
 describe('一覧画面の描画', () => {
@@ -225,7 +240,7 @@ describe('単体操作の行内表示', () => {
         new Promise<OperationResult>((resolve) => {
           resolveAction = () =>
             resolve({ target: 'nas', operation: 'wake', result: 'succeeded' });
-        }) as unknown as OperationResult,
+        }),
     });
 
     fireEvent.click(
@@ -302,9 +317,8 @@ describe('部分更新（FR-02, FR-07, NFR-09）', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     renderDashboard(loaderData(), {
       action: () =>
-        new Promise<OperationResult>(() => {
-          // 応答を返さず、送信中のまま 15 秒以上経過させる。
-        }) as unknown as OperationResult,
+        // 応答を返さず、送信中のまま 15 秒以上経過させる。
+        new Promise<OperationResult>(() => {}),
     });
 
     fireEvent.click(
@@ -319,8 +333,7 @@ describe('部分更新（FR-02, FR-07, NFR-09）', () => {
 
   test('「実行中」は操作した対象行にだけ出る', async () => {
     const { container } = renderDashboard(loaderData(), {
-      action: () =>
-        new Promise<OperationResult>(() => {}) as unknown as OperationResult,
+      action: () => new Promise<OperationResult>(() => {}),
     });
 
     fireEvent.click(
@@ -390,7 +403,28 @@ describe('停止の確認', () => {
 });
 
 describe('状態の自動更新', () => {
-  test('間隔は 15 秒で固定する（FR-02）', () => {
+  test('周期の遅延値は 15 秒で固定する（FR-02）', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const delays: Array<number | undefined> = [];
+    const original = globalThis.setTimeout;
+    // export 定数の写し取りではなく、実際に登録される遅延値を観測する。
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((
+      handler: () => void,
+      delay?: number,
+    ) => {
+      delays.push(delay);
+      return original(handler, delay);
+    }) as typeof globalThis.setTimeout);
+
+    renderDashboard(loaderData());
+    // loader の解決後に画面が描画され、周期が登録される。
+    await advanceUntil(() => delays.length > 0);
+
+    // 画面の周期（状態・履歴）は 15 秒で登録される。
+    expect(delays).toContain(statusRefreshIntervalMs);
+    expect(
+      delays.filter((delay) => delay === statusRefreshIntervalMs).length,
+    ).toBeGreaterThanOrEqual(2);
     expect(statusRefreshIntervalMs).toBe(15_000);
   });
 
@@ -468,7 +502,7 @@ describe('状態の自動更新', () => {
         path: '/api/status',
         loader: () => {
           calls += 1;
-          // 5xx は本文を返さない。画面側は応答を状態として解釈できず、表示を変えない。
+          // 5xx の本文は JSON ではない。画面側は応答を状態として解釈できず、表示を変えない。
           return new Response('boom', { status: 500 });
         },
       },

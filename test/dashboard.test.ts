@@ -1,8 +1,9 @@
 /**
  * 一覧画面の loader / action の検証（FR-01, FR-04, FR-05, FR-07, FR-13）。
  *
- * 画面の描画（行内の進行表示・自動更新・確認ダイアログ）は `test/routes.test.tsx` が
- * クライアント側で検証する。ここではサーバー側の入出力だけを見る。
+ * 画面の描画（行内の進行表示・自動更新・確認ダイアログ）は
+ * `test/dashboard-screen.test.tsx` と `test/routes.test.tsx` が検証する。
+ * ここではサーバー側の入出力だけを見る。
  */
 import { RouterContextProvider } from 'react-router';
 import { describe, expect, test, vi } from 'vitest';
