@@ -40,9 +40,7 @@ function loaderData(
   };
 }
 
-function record(
-  overrides: Partial<PowerOperationRecord> = {},
-): HistoryRecord {
+function record(overrides: Partial<PowerOperationRecord> = {}): HistoryRecord {
   return {
     seq: 1,
     at: '2026-01-02T03:04:05.000Z',
@@ -137,7 +135,11 @@ async function advance(ms: number) {
  * 発火を取りこぼすことがあるため、1ms ずつ進めて判定する。
  */
 async function advanceUntil(done: () => boolean) {
-  for (let elapsed = 0; elapsed < statusRefreshIntervalMs * 2 && !done(); elapsed += 1) {
+  for (
+    let elapsed = 0;
+    elapsed < statusRefreshIntervalMs * 2 && !done();
+    elapsed += 1
+  ) {
     await advance(1);
   }
 }
@@ -427,13 +429,21 @@ describe('一括操作', () => {
   test('全台一括とグループごとの見出し・ボタンを出す', async () => {
     renderDashboard(loaderData());
 
-    expect(await screen.findByRole('heading', { name: 'ストレージ' })).toBeDefined();
-    expect(screen.getByRole('heading', { name: 'すべてのサーバー' })).toBeDefined();
+    expect(
+      await screen.findByRole('heading', { name: 'ストレージ' }),
+    ).toBeDefined();
+    expect(
+      screen.getByRole('heading', { name: 'すべてのサーバー' }),
+    ).toBeDefined();
     // 全台 1 組 + グループ 1 組（ストレージ）の 起動・停止。
     expect(screen.getAllByRole('button', { name: '全台起動' })).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: '全台停止' })).toHaveLength(1);
-    expect(screen.getAllByRole('button', { name: 'グループ起動' })).toHaveLength(1);
-    expect(screen.getAllByRole('button', { name: 'グループ停止' })).toHaveLength(1);
+    expect(
+      screen.getAllByRole('button', { name: 'グループ起動' }),
+    ).toHaveLength(1);
+    expect(
+      screen.getAllByRole('button', { name: 'グループ停止' }),
+    ).toHaveLength(1);
   });
 
   test('サーバーが 0 台のときは一括ボタンを出さない', async () => {
@@ -447,7 +457,9 @@ describe('一括操作', () => {
     const onAction = vi.fn();
     renderDashboard(loaderData(), { onAction, action: () => batchResult() });
 
-    fireEvent.click(await screen.findByRole('button', { name: 'グループ起動' }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'グループ起動' }),
+    );
     await vi.waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
     const form = onAction.mock.calls[0]?.[0] as FormData;
     expect(form.get('intent')).toBe('wake-group');

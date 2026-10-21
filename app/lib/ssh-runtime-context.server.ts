@@ -6,12 +6,14 @@
  * 受け取らないようにするため。一方で action（`app/routes/dashboard.tsx`）は停止操作の
  * 実行にこの 2 つのパスを必要とするため、専用のキーで明示的に渡す。
  *
- * `configContext`（`app/lib/config.server.ts`）と同じ理由で `globalThis` のスロットを
- * 唯一の情報源にする。サーバーエントリと `build/server/index.js` は別のモジュールグラフに
- * なるため、モジュールスコープでキーを作ると実体が 2 つになり、action 側の
- * `context.get` が失敗する。
+ * `globalThis` のスロットを唯一の情報源にする理由は
+ * `app/lib/context-registry.ts` を参照。サーバーエントリと `build/server/index.js` は
+ * 別のモジュールグラフになるため、モジュールスコープでキーを作ると実体が 2 つになり、
+ * action 側の `context.get` が失敗する。
  */
-import { createContext, type RouterContext } from 'react-router';
+import type { RouterContext } from 'react-router';
+
+import { sharedRouterContext } from './context-registry.ts';
 
 /** SSH 停止の実行に必要なパス。 */
 export type SshRuntime = {
@@ -23,17 +25,9 @@ export type SshRuntime = {
 
 const sshRuntimeContextSlot = '__powerManagerSshRuntimeContext';
 
-type SshRuntimeContextRegistry = {
-  [sshRuntimeContextSlot]?: RouterContext<SshRuntime>;
-};
-
-const sshRuntimeContextRegistry =
-  globalThis as unknown as SshRuntimeContextRegistry;
-
 /** SSH 停止の実行に必要なパスの load context キー。`server/app.ts` が実体を設定する。 */
 export const sshRuntimeContext: RouterContext<SshRuntime> =
-  (sshRuntimeContextRegistry[sshRuntimeContextSlot] ??=
-    createContext<SshRuntime>());
+  sharedRouterContext<SshRuntime>(sshRuntimeContextSlot);
 
 /** `RouterContextProvider` のうち `requireSshRuntime` が使う部分。テストで差し替えられるようにする。 */
 type RouterContextProviderLike = { get: <T>(key: RouterContext<T>) => T };

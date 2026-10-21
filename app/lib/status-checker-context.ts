@@ -10,8 +10,9 @@
  * （`app/lib/power.server.ts`）へは型だけ依存する。実体は `server/app.ts` が
  * `createStatusChecker()` で作り、`context.set(statusCheckerContext, ...)` で載せる。
  */
-import { createContext, type RouterContext } from 'react-router';
+import type { RouterContext } from 'react-router';
 
+import { sharedRouterContext } from './context-registry.ts';
 import type { ServerState } from './model.ts';
 import type { StatusChecker } from './power.server.ts';
 
@@ -26,19 +27,12 @@ export type StatusResponse = {
 };
 
 /**
- * `configStoreContext`（`app/lib/config-store.server.ts`）と同じ理由で `globalThis` の
- * スロットを唯一の情報源にする。サーバーエントリと `build/server/index.js` は別の
- * モジュールグラフになるため、モジュールスコープでキーを作ると実体が 2 つになり、
+ * `globalThis` のスロットを唯一の情報源にする理由は
+ * `app/lib/context-registry.ts` を参照。サーバーエントリと `build/server/index.js` は
+ * 別のモジュールグラフになるため、モジュールスコープでキーを作ると実体が 2 つになり、
  * loader 側の `context.get` が失敗する。
  */
 const statusCheckerContextSlot = '__powerManagerStatusCheckerContext';
-
-type StatusCheckerContextRegistry = {
-  [statusCheckerContextSlot]?: RouterContext<StatusChecker>;
-};
-
-const statusCheckerContextRegistry =
-  globalThis as unknown as StatusCheckerContextRegistry;
 
 /**
  * 死活確認器の load context キー。`server/app.ts` が実体を設定する。
@@ -48,8 +42,7 @@ const statusCheckerContextRegistry =
  * 外れる。
  */
 export const statusCheckerContext: RouterContext<StatusChecker> =
-  (statusCheckerContextRegistry[statusCheckerContextSlot] ??=
-    createContext<StatusChecker>());
+  sharedRouterContext<StatusChecker>(statusCheckerContextSlot);
 
 /** `RouterContextProvider` のうち `requireStatusChecker` が使う部分。テストで差し替えられるようにする。 */
 type RouterContextProviderLike = { get: <T>(key: RouterContext<T>) => T };

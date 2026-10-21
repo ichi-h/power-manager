@@ -18,8 +18,9 @@
  */
 import { readFile } from 'node:fs/promises';
 
-import { createContext, type RouterContext } from 'react-router';
+import type { RouterContext } from 'react-router';
 
+import { sharedRouterContext } from './context-registry.ts';
 import type { ManagedConfig } from './model.ts';
 import {
   ManagedConfigError,
@@ -51,24 +52,16 @@ export type ConfigStore = {
 /**
  * 設定ストアの load context キー。
  *
- * `configContext`（`app/lib/config.server.ts`）と同じ理由で `globalThis` のスロットを
- * 唯一の情報源にする。サーバーエントリと `build/server/index.js` は別のモジュール
- * グラフになるため、モジュールスコープでキーを作ると実体が 2 つになり、
+ * `globalThis` のスロットを唯一の情報源にする理由は
+ * `app/lib/context-registry.ts` を参照。サーバーエントリと `build/server/index.js` は
+ * 別のモジュールグラフになるため、モジュールスコープでキーを作ると実体が 2 つになり、
  * loader 側の `context.get` が失敗する。
  */
 const configStoreContextSlot = '__powerManagerConfigStoreContext';
 
-type ConfigStoreContextRegistry = {
-  [configStoreContextSlot]?: RouterContext<ConfigStore>;
-};
-
-const configStoreContextRegistry =
-  globalThis as unknown as ConfigStoreContextRegistry;
-
 /** loader/action から設定ストアを参照するためのキー。 */
 export const configStoreContext: RouterContext<ConfigStore> =
-  (configStoreContextRegistry[configStoreContextSlot] ??=
-    createContext<ConfigStore>());
+  sharedRouterContext<ConfigStore>(configStoreContextSlot);
 
 /** `RouterContextProvider` のうち `requireConfigStore` が使う部分。テストで差し替えられるようにする。 */
 type RouterContextProviderLike = { get: <T>(key: RouterContext<T>) => T };

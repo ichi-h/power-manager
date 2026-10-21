@@ -17,8 +17,9 @@
  * 浅いコピー（配列のコピー）で返すが、要素オブジェクトは凍結済みのため、
  * 呼び出し側が要素フィールドを書き換えても内部の保持へ波及しない。
  */
-import { createContext, type RouterContext } from 'react-router';
+import type { RouterContext } from 'react-router';
 
+import { sharedRouterContext } from './context-registry.ts';
 import type { HistoryRecord } from './history-context.ts';
 import type { PowerOperationRecord } from './power.server.ts';
 
@@ -26,7 +27,6 @@ export type { HistoryRecord };
 
 /** 保持件数の既定値（FR-13）。環境変数などで変える設定項目は持たない。 */
 export const historyCapacity = 100;
-
 
 /**
  * 実行結果のリングバッファ。
@@ -85,16 +85,9 @@ export function createOperationHistory(
  */
 const historyContextSlot = '__powerManagerHistoryContext';
 
-type HistoryContextRegistry = {
-  [historyContextSlot]?: RouterContext<OperationHistory>;
-};
-
-const historyContextRegistry = globalThis as unknown as HistoryContextRegistry;
-
 /** loader/action からリングバッファを参照するためのキー。`server/app.ts` が実体を設定する。 */
 export const historyContext: RouterContext<OperationHistory> =
-  (historyContextRegistry[historyContextSlot] ??=
-    createContext<OperationHistory>());
+  sharedRouterContext<OperationHistory>(historyContextSlot);
 
 /** `RouterContextProvider` のうち `requireHistory` が使う部分。テストで差し替えられるようにする。 */
 type RouterContextProviderLike = { get: <T>(key: RouterContext<T>) => T };

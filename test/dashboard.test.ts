@@ -266,9 +266,9 @@ describe('一覧画面の action', () => {
     expect(toResultKind({ result: 'skipped', code: 'busy' }, 'batch')).toBe(
       'skipped',
     );
-    expect(toResultKind({ result: 'failed', code: 'operation_failed' }, 'batch')).toBe(
-      'failed',
-    );
+    expect(
+      toResultKind({ result: 'failed', code: 'operation_failed' }, 'batch'),
+    ).toBe('failed');
     expect(toResultKind({ result: 'succeeded', code: null }, 'batch')).toBe(
       'succeeded',
     );
@@ -320,9 +320,9 @@ describe('一括操作の action', () => {
     const [scope, operation, targets, runtime] = operateAll.mock.calls[0]!;
     expect(scope).toEqual({ type: 'group', id: 'storage' });
     expect(operation).toBe('shutdown');
-    expect(
-      targets.map((target: { readonly id: string }) => target.id),
-    ).toEqual(['nas', 'test-01']);
+    expect(targets.map((target: { readonly id: string }) => target.id)).toEqual(
+      ['nas', 'test-01'],
+    );
     // 秘密値は応答に含めず、load context から操作器へ渡す（SEC-05）。
     expect(runtime).toEqual({
       sshIdentityFile: '/run/secrets/id_ed25519',

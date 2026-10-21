@@ -97,10 +97,10 @@ describe('相互参照', () => {
   test('所属グループの重複は一括操作の対象集合を変えない（ID で重複排除）', () => {
     // 検証は重複を拒否するが、対象集合の確定側も 1 台 1 回に畳む（docs/operations.md 2.2）。
     expect(
-      resolveBatchTargets(
-        [{ id: 'nas', groups: ['storage', 'storage'] }],
-        { type: 'group', id: 'storage' },
-      ).map((server) => server.id),
+      resolveBatchTargets([{ id: 'nas', groups: ['storage', 'storage'] }], {
+        type: 'group',
+        id: 'storage',
+      }).map((server) => server.id),
     ).toEqual(['nas']);
   });
 

@@ -17,10 +17,7 @@ import { useFetcher, type RouterContext } from 'react-router';
 
 import type { Route } from './+types/dashboard';
 import { requireConfigStore } from '../lib/config-store.server.ts';
-import type {
-  HistoryRecord,
-  HistoryResponse,
-} from '../lib/history-context.ts';
+import type { HistoryRecord, HistoryResponse } from '../lib/history-context.ts';
 import { requireHistory } from '../lib/history.server.ts';
 import type {
   ManagedConfig,
@@ -190,7 +187,11 @@ export async function action({ request, context }: Route.ActionArgs) {
   const intent = form.get('intent');
 
   if (intent === 'wake-group' || intent === 'shutdown-group') {
-    return runBatch(form, context, intent === 'wake-group' ? 'wake' : 'shutdown');
+    return runBatch(
+      form,
+      context,
+      intent === 'wake-group' ? 'wake' : 'shutdown',
+    );
   }
 
   const config = requireConfigStore(context).current();
@@ -648,25 +649,33 @@ function ServerRow({
     Partial<Record<PowerOperation, { data: OperationResult; count: number }>>
   >({});
 
+  // effect の依存を fetcher のオブジェクトではなく値そのものに揃える。
+  // `useFetcher()` が返すオブジェクトは毎回別の参照になるため、fetcher ごと依存に
+  // 入れると不要な再実行が増える（useExhaustiveDependencies の指摘）。
+  const wakeState = wakeFetcher.state;
+  const wakeData = wakeFetcher.data;
+  const shutdownState = shutdownFetcher.state;
+  const shutdownData = shutdownFetcher.data;
+
   useEffect(() => {
-    for (const [operation, fetcher] of [
-      ['wake', wakeFetcher],
-      ['shutdown', shutdownFetcher],
+    for (const [operation, state, data] of [
+      ['wake', wakeState, wakeData],
+      ['shutdown', shutdownState, shutdownData],
     ] as const) {
-      if (fetcher.state !== 'idle' || fetcher.data === undefined) continue;
+      if (state !== 'idle' || data === undefined) continue;
       const previous = seen.current[operation];
       // 同じ応答を繰り返し処理しない（再レンダーで送信連番を取り直さない）。
-      if (previous?.data === fetcher.data) continue;
+      if (previous?.data === data) continue;
       submitCount.current += 1;
-      const entry = { data: fetcher.data, count: submitCount.current };
+      const entry = { data, count: submitCount.current };
       seen.current[operation] = entry;
       setLatest((current) =>
         current === undefined || entry.count > current.submittedAt
-          ? { result: fetcher.data!, submittedAt: entry.count }
+          ? { result: data, submittedAt: entry.count }
           : current,
       );
     }
-  }, [wakeFetcher.state, wakeFetcher.data, shutdownFetcher.state, shutdownFetcher.data]);
+  }, [wakeState, wakeData, shutdownState, shutdownData]);
 
   return (
     <li>
@@ -760,11 +769,7 @@ function BatchControls({
           method="post"
           onSubmit={(event) => submit(event, operation)}
         >
-          <input
-            type="hidden"
-            name="intent"
-            value={`${operation}-group`}
-          />
+          <input type="hidden" name="intent" value={`${operation}-group`} />
           <input
             type="hidden"
             name="scope"

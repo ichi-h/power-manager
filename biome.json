@@ -13,7 +13,8 @@
       "!**/.direnv",
       "!**/.react-router",
       "!**/build",
-      "!**/result"
+      "!**/result",
+      "!server/index.js"
     ]
   },
   "formatter": {
@@ -45,5 +46,17 @@
         "organizeImports": "on"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["test/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNonNullAssertion": "off"
+          }
+        }
+      }
+    }
+  ]
 }

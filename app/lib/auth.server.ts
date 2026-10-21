@@ -10,9 +10,10 @@
  */
 import { verify } from 'argon2';
 import type { Route } from '../+types/root';
-import { createContext, type RouterContext } from 'react-router';
+import type { RouterContext } from 'react-router';
 
 import { loadRuntimeConfig, type RuntimeConfig } from './config.server.ts';
+import { sharedRouterContext } from './context-registry.ts';
 
 export type { RuntimeConfig };
 
@@ -25,23 +26,16 @@ const basicRealm = 'power-manager';
 /**
  * 認証済み利用者を保持する load context のキー。
  *
- * `configContext`（`app/lib/config.server.ts`）と同じ理由で `globalThis` のスロットを
- * 唯一の情報源にする。ビルド成果物とサーバーエントリは別のモジュールグラフであり、
- * モジュールスコープで `createContext()` すると実体が 2 つになり、ミドルウェアが
- * 設定した値を loader/action 側の `context.get(authContext)` で引けなくなる。
+ * `globalThis` のスロットを唯一の情報源にする理由は
+ * `app/lib/context-registry.ts` を参照。ビルド成果物とサーバーエントリは別の
+ * モジュールグラフであり、モジュールスコープで作ると実体が 2 つになり、
+ * ミドルウェアが設定した値を loader/action 側の `context.get(authContext)` で引けない。
  */
 const authContextSlot = '__powerManagerAuthContext';
 
-type AuthContextRegistry = {
-  [authContextSlot]?: RouterContext<string>;
-};
-
-const authContextRegistry = globalThis as unknown as AuthContextRegistry;
-
 /** 認証済み利用者のユーザー名。loader/action は `context.get(authContext)` で参照する。 */
-export const authContext: RouterContext<string> = (authContextRegistry[
-  authContextSlot
-] ??= createContext<string>() as RouterContext<string>);
+export const authContext: RouterContext<string> =
+  sharedRouterContext<string>(authContextSlot);
 
 /**
  * 401 応答。`WWW-Authenticate` を忘れるとブラウザが認証ダイアログを出さない。

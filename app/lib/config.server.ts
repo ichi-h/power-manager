@@ -10,8 +10,10 @@
  */
 import path from 'node:path';
 
-import { createContext, type RouterContext } from 'react-router';
+import type { RouterContext } from 'react-router';
 import { z } from 'zod';
+
+import { sharedRouterContext } from './context-registry.ts';
 
 /** 実行モード。本番の環境変数ファイルでは `production` を指定する。 */
 export type NodeEnvironment = 'production' | 'development' | 'test';
@@ -84,29 +86,16 @@ export type RuntimeConfig = PublicRuntimeConfig & AuthConfig & SshConfig;
  * `server/app.ts` が `createLoadContext` で設定し、loader/action は
  * `context.get(configContext)` で参照する。
  *
- * キーの実体はプロセス内で 1 つでなければならない。`react-router build` が生成する
- * `build/server/index.js`（ルート側）と自前エントリのバンドル（`server/index.js`）は
- * 別のモジュールグラフであり、モジュールスコープで `createContext()` すると同じ名前でも
- * 実体が 2 つになる。すると `server/app.ts` が入れた値がルート側から引けず、
- * 実行時に「No value found for context」で 500 になる。`globalThis` 上の 1 つの
- * スロットを唯一の情報源にして、どちらのグラフからも同じオブジェクトを返す。
- *
- * `RouterContextProvider` はキーをオブジェクト同一性で照合するため、この共有が必要になる。
+ * キーの実体はプロセス内で 1 つでなければならない。理由（別のモジュールグラフでも
+ * 同じオブジェクトを返す必要があること）は `app/lib/context-registry.ts` を参照。
  */
 const configContextSlot = '__powerManagerConfigContext';
-
-type ConfigContextRegistry = {
-  [configContextSlot]?: RouterContext<PublicRuntimeConfig>;
-};
-
-const configContextRegistry = globalThis as unknown as ConfigContextRegistry;
 
 /**
  * 公開値だけを載せる。秘密値（`AuthConfig` / `SshConfig`）はここに入れない。
  */
 export const configContext: RouterContext<PublicRuntimeConfig> =
-  (configContextRegistry[configContextSlot] ??=
-    createContext<PublicRuntimeConfig>());
+  sharedRouterContext<PublicRuntimeConfig>(configContextSlot);
 
 /**
  * 公開値だけを取り出す。load context へ載せる範囲をこの関数で固定する。

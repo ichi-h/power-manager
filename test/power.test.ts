@@ -244,7 +244,9 @@ describe('一括操作の対象集合と要約（FR-11）', () => {
 
   test('全台は定義順の全サーバーを返す', () => {
     expect(
-      resolveBatchTargets(servers, { type: 'all' }).map((server2) => server2.id),
+      resolveBatchTargets(servers, { type: 'all' }).map(
+        (server2) => server2.id,
+      ),
     ).toEqual(['nas', 'test-01', 'builder', 'lone']);
   });
 
