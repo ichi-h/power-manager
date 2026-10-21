@@ -13,7 +13,7 @@ buildNpmPackage {
 
   # `nix build` が表示するハッシュで固定する。
   npmDepsFetcherVersion = 2;
-  npmDepsHash = "sha256-A7nY8urLhwmoxMLnSS/ldxwohlGwBlVnsPQE6yFCvFY=";
+  npmDepsHash = "sha256-LG9fcT1bZ/uZmfsrxw0aj6PhEGdCcCdFu+tgLaPiFL4=";
   nodejs = nodejs_24;
 
   nativeBuildInputs = [ makeWrapper ];
@@ -28,17 +28,21 @@ buildNpmPackage {
     runHook preInstall
     mkdir -p $out/share/power-manager
     cp -r build $out/share/power-manager/build
-    cp -r server $out/share/power-manager/server
+
+    # `npm run build` が生成したバンドル済みエントリだけを配置する。`server/index.ts` は
+    # `app/` 配下の TypeScript を相対 import するため、ソースツリーを置かない配置では
+    # 起動できない（ERR_MODULE_NOT_FOUND）。
+    install -Dm644 server/index.js $out/share/power-manager/server/index.js
     cp package.json package-lock.json $out/share/power-manager/
 
-    # サーバーエントリは実行時に react-router / zod を解決するため、
-    # 本番依存だけを残した node_modules を同梱する。
+    # バンドルは依存パッケージを external のまま残すため、本番依存だけを
+    # 同梱した node_modules を置く。
     npm prune --omit=dev --ignore-scripts
     cp -r node_modules $out/share/power-manager/node_modules
 
     makeWrapper ${lib.getExe nodejs_24} $out/bin/power-manager \
       --chdir $out/share/power-manager \
-      --add-flags "--conditions=react-router $out/share/power-manager/server/index.ts" \
+      --add-flags "$out/share/power-manager/server/index.js" \
       --prefix PATH : ${lib.makeBinPath [ openssh ]}
     runHook postInstall
   '';

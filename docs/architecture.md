@@ -297,10 +297,14 @@ ssh -i <identityFile>
 build/
   client/           # ハッシュ付き資産。1 年キャッシュ可
   server/index.js   # ServerBuild（ハンドラではない）
-server/index.ts     # 自前エントリ（TypeScript のまま配置し、起動時に読み込むか事前にバンドルする）
+server/index.js     # 自前エントリ。scripts/bundle-server.mjs が server/index.ts から生成する単一バンドル
 ```
 
-Nix パッケージでは、ビルド済みの `build/` と `server/` を `$out/share/power-manager` に置き、`makeWrapper` で `node` を起動するラッパーを `$out/bin/power-manager` に作る。`--chdir` で作業ディレクトリを固定し、`build/client` の静的配信が相対パスで解決できるようにする。`node_modules` は本番依存のみを残す（`npm ci --omit=dev`）。
+`server/index.js` は `npm run build` の後半で `scripts/bundle-server.mjs`（esbuild）が生成する。`server/index.ts` は `app/lib/config.server.ts` などアプリ側の TypeScript を相対 import するため、ソースツリーを配置しない Nix パッケージでは `ERR_MODULE_NOT_FOUND` になる。自前のソースだけを 1 ファイルに畳み、実行時依存を `node_modules` と `build/` に限る。依存パッケージは external のまま残す（`argon2` のネイティブバインディングと、`build/server/index.js` を動的 import する `react-router` の解決経路を壊さないため）。
+
+`server/static.ts` が `import.meta.url` からの相対パスで `../build/client` を解決するため、バンドルの出力先は `server/index.js`（`server/` 直下）でなければならない。生成物は `.gitignore` の対象で、リポジトリには含めない。
+
+Nix パッケージでは、ビルド済みの `build/` と `server/index.js` を `$out/share/power-manager` に置き、`makeWrapper` で `node` を起動するラッパーを `$out/bin/power-manager` に作る。`--chdir` で作業ディレクトリを固定し、`build/client` の静的配信が相対パスで解決できるようにする。`node_modules` は本番依存のみを残す（`npm ci --omit=dev`）。
 
 ### 8.2 Nix
 

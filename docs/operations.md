@@ -177,8 +177,8 @@ npm ci                 # 依存の導入（bun は使わない）
 npm run dev            # react-router dev（Vite、127.0.0.1 で待受）
 npm run typecheck      # react-router typegen && tsc --noEmit
 npm run test           # vitest run
-npm run build          # react-router build
-npm run start          # node --conditions=react-router ./server/index.ts 相当の本番起動
+npm run build          # react-router build + scripts/bundle-server.mjs（server/index.js を生成）
+npm run start          # node ./server/index.js（バンドル済みエントリ）
 ```
 
 - 開発時も Node.js 24 を使う。`bun` は使わない。
@@ -222,7 +222,7 @@ buildNpmPackage {
     runHook preInstall
     mkdir -p $out/share/power-manager
     cp -r build $out/share/power-manager/build
-    cp -r server $out/share/power-manager/server
+    install -Dm644 server/index.js $out/share/power-manager/server/index.js
     cp package.json $out/share/power-manager/package.json
     cp -r node_modules $out/share/power-manager/node_modules
 
@@ -241,7 +241,7 @@ buildNpmPackage {
 }
 ```
 
-- サーバーエントリは事前にバンドルするか、`server/` を TypeScript のまま置いて Node の型ストリッピングで動かすかを選ぶ。Node 24 の型ストリッピングは実験的なので、**バンドルを推奨**する（`esbuild` などで `server/index.ts` を `server/index.js` に変換し、`node` に渡す）。
+- サーバーエントリは `npm run build` の後半で `scripts/bundle-server.mjs`（esbuild）が `server/index.js` にバンドルする。`server/index.ts` をそのまま配置すると、`app/` 配下の TypeScript を相対 import しているため `ERR_MODULE_NOT_FOUND` で起動できない。配置対象はバンドル済みの `server/index.js` だけにする（`server/*.ts` は置かない）。
 - `node_modules` は本番依存のみを残す。`buildNpmPackage` の `npmInstallFlags = [ "--omit=dev" ]` を検討する。
 - OpenSSH は `makeWrapper` で `PATH` に追加し、`nix run` と `nix profile install` で `ssh` を発見できるようにする。NixOS モジュールも同様に `PATH` を設定する。
 - 実行時にファイルを書かないため、`StateDirectory` は不要（[セキュリティ設計](security.md) 6 章）。

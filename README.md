@@ -20,7 +20,7 @@ npm ci
 npm run dev          # 開発サーバー（Vite、127.0.0.1:5173）
 npm run typecheck    # react-router typegen && tsc --noEmit
 npm run test         # Vitest
-npm run build        # react-router build（build/client と build/server）
+npm run build        # react-router build + サーバーエントリのバンドル（server/index.js）
 npm run start        # ビルド成果物を Node.js で起動
 npm run smoke        # build 後に起動と HTML 応答を確認
 ```

@@ -2,7 +2,7 @@
 /**
  * 起動スモークテスト。
  *
- * `npm run build` の成果物を本番と同じ手順（node --conditions=react-router）で起動し、
+ * `npm run build` の成果物（バンドル済みの `server/index.js`）を本番と同じ手順で起動し、
  * loopback で待受けて画面が HTML を返すこと、SIGTERM で正常終了することを確認する。
  */
 import { spawn } from "node:child_process";
@@ -12,7 +12,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 const port = Number(process.env.SMOKE_PORT ?? 18080);
 const origin = `http://127.0.0.1:${port}`;
-const serverEntry = "server/index.ts";
+const serverEntry = "server/index.js";
 const timeoutMilliseconds = 30_000;
 /** 設定エラーを表す sysexits.h の EX_CONFIG。 */
 const configurationErrorExitCode = 78;
@@ -34,12 +34,14 @@ const runtimeEnvironment = {
   POWER_MANAGER_SSH_KNOWN_HOSTS_FILE: "/dev/null",
 };
 
-if (!existsSync("build/server/index.js")) {
-  console.error("build/server/index.js がありません。先に npm run build を実行してください。");
-  process.exit(1);
+for (const artifact of ["build/server/index.js", serverEntry]) {
+  if (!existsSync(artifact)) {
+    console.error(`${artifact} がありません。先に npm run build を実行してください。`);
+    process.exit(1);
+  }
 }
 
-const child = spawn(process.execPath, ["--conditions=react-router", serverEntry], {
+const child = spawn(process.execPath, [serverEntry], {
   env: { ...process.env, ...runtimeEnvironment },
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -112,7 +114,7 @@ function stopServer() {
  */
 function checkConfigurationError() {
   return new Promise((resolve, reject) => {
-    const invalid = spawn(process.execPath, ["--conditions=react-router", serverEntry], {
+    const invalid = spawn(process.execPath, [serverEntry], {
       env: { ...process.env, ...runtimeEnvironment, POWER_MANAGER_PORT: "not-a-port" },
       stdio: ["ignore", "pipe", "pipe"],
     });

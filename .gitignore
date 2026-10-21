@@ -5,3 +5,4 @@ dist/
 result
 .env
 .direnv
+server/index.js
