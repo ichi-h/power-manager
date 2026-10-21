@@ -22,9 +22,17 @@ import {
   configStoreContext,
   type ConfigStore,
 } from "../app/lib/config-store.server.ts";
+import {
+  createStatusChecker,
+  type StatusChecker,
+} from "../app/lib/power.server.ts";
+import { statusCheckerContext } from "../app/routes/api.status.tsx";
 import { logRequestFailure } from "./log.ts";
 
-export type { ConfigStore, RuntimeConfig };
+export type { ConfigStore, RuntimeConfig, StatusChecker };
+
+/** プロセス共有の死活確認器。1 つのプロセスで 1 つだけ作る（NFR-08）。 */
+const sharedStatusChecker = createStatusChecker();
 
 /**
  * loader/action へ渡す load context を組み立てる。
@@ -40,6 +48,8 @@ export function createLoadContext(
   const context = new RouterContextProvider();
   context.set(configContext, toPublicRuntimeConfig(runtime));
   context.set(configStoreContext, configStore);
+  // 死活確認器は server-only の実体をここから載せる。ルート側は型だけに依存させる。
+  context.set(statusCheckerContext, sharedStatusChecker);
   return context;
 }
 
@@ -83,7 +93,10 @@ export function withErrorHandler(build: ServerBuild): ServerBuild {
  * なお React Router 側の照合はワイルドカード（`*`）を解釈するため、`*` を含まない
  * ホストだけを受け付ける検証は `parsePublicOrigin` で済ませてある。
  */
-export function withAllowedActionOrigins(build: ServerBuild, host: string): ServerBuild {
+export function withAllowedActionOrigins(
+  build: ServerBuild,
+  host: string,
+): ServerBuild {
   return {
     ...build,
     allowedActionOrigins: [host],
@@ -92,10 +105,15 @@ export function withAllowedActionOrigins(build: ServerBuild, host: string): Serv
 
 async function loadServerBuild(runtime: RuntimeConfig): Promise<ServerBuild> {
   const build = (await import(serverBuildPath)) as ServerBuild;
-  return withErrorHandler(withAllowedActionOrigins(build, runtime.publicOriginHost));
+  return withErrorHandler(
+    withAllowedActionOrigins(build, runtime.publicOriginHost),
+  );
 }
 
-export function createAppListener(runtime: RuntimeConfig, configStore: ConfigStore) {
+export function createAppListener(
+  runtime: RuntimeConfig,
+  configStore: ConfigStore,
+) {
   return createRequestListener({
     build: () => loadServerBuild(runtime),
     // 明示しないと `develop` 扱いになり、開発用の挙動が残る（SEC-05）。

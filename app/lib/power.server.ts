@@ -593,7 +593,11 @@ export function createPowerOperator(
         result: "skipped",
         code: "busy",
       } as SingleOperationOutcome);
-      onRecord(skipped);
+      try {
+        onRecord(skipped);
+      } catch {
+        // 記録の失敗は操作の成否に影響させない。
+      }
       return skipped;
     }
     busy.add(serverId);
@@ -617,7 +621,11 @@ export function createPowerOperator(
       busy.delete(serverId);
     }
     const done = record(outcome);
-    onRecord(done);
+    try {
+      onRecord(done);
+    } catch {
+      // 記録の失敗は操作の成否に影響させない。
+    }
     return done;
   };
 

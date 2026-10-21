@@ -4,15 +4,16 @@
  * 全サーバーの死活状態を `application/json` で返す。認証は root のミドルウェアが
  * 要求する（FR-10, SEC-01）。UI 内部用のエンドポイントであり、公開 API ではない
  * （`docs/architecture.md` 4 章）。
+ *
+ * このファイルは client からも参照されるため、server-only の実装へ直接依存しない。
+ * 死活確認器（`StatusChecker`）は load context を通して受け取る。実体は
+ * `server/app.ts`（server-only）が `createStatusChecker()` で作る。
  */
 import { createContext, type RouterContext } from "react-router";
 
 import { requireConfigStore } from "../lib/config-store.server.ts";
-import {
-  createStatusChecker,
-  type StatusChecker,
-} from "../lib/power.server.ts";
 import type { ServerState } from "../lib/model.ts";
+import type { StatusChecker } from "../lib/power.server.ts";
 
 /**
  * 死活確認器の load context キー。
@@ -31,28 +32,27 @@ type StatusCheckerContextRegistry = {
 const statusCheckerContextRegistry =
   globalThis as unknown as StatusCheckerContextRegistry;
 
-/** 死活確認器のプロセス共有インスタンス。1 つのプロセスで 1 つだけ作る（NFR-08）。 */
-const sharedStatusChecker = createStatusChecker();
-
-/** loader から死活確認器を参照するためのキー。未設定ならプロセス共有の確認器を使う。 */
+/**
+ * 死活確認器の load context キー。`server/app.ts` が実体を設定する。
+ *
+ * 初期値を持たせない（`createContext<StatusChecker>()`）。server-only の実装を初期値に
+ * すると client ビルドからも依存が見えて、React Router の server-code 削除の対象から
+ * 外れる。
+ */
 export const statusCheckerContext: RouterContext<StatusChecker> =
-  createContext<StatusChecker>(sharedStatusChecker);
+  (statusCheckerContextRegistry[statusCheckerContextSlot] ??=
+    createContext<StatusChecker>());
 
 /**
- * 死活確認器を load context から読む。未設定ならプロセス共有の既定値を使う。
+ * 死活確認器を load context から読む。
  *
- * テストは `context.set(statusCheckerContext, checker)` で確認器を差し替え、本物の
- * TCP 待受に依存しない。
+ * 未設定なら配線不整合である。本番でここに来るのは、`server/app.ts` の
+ * `createLoadContext` を経由しない経路を作った場合だけである。
  */
 function requireStatusChecker(
   context: Parameters<typeof requireConfigStore>[0],
 ): StatusChecker {
-  try {
-    return context.get(statusCheckerContext);
-  } catch {
-    // 未設定でも落とさない。プロセス共有の既定の確認器をそのまま使う。
-    return sharedStatusChecker;
-  }
+  return context.get(statusCheckerContext);
 }
 
 /**
