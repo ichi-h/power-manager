@@ -217,6 +217,8 @@ export function createLoadContext(runtime: RuntimeConfig, configStore: ConfigSto
 
 停止は `useSubmit` の前に確認ダイアログを出し、拒否時は送信しない（FR-05, SEC-07）。一括停止では対象サーバーの表示名を列挙した 1 回の確認とする。
 
+一括操作のボタンと結果表示は `BatchControls`（`app/routes/dashboard.tsx`）が担い、全台一括とグループ一括で共通に使う。完了後は対象ごとの結果と要約を、ボタンの直下に出す。
+
 ### 4.2 部分更新と進行表示
 
 - 操作は `fetcher.submit()` で action を呼ぶ。`fetcher.state` が `submitting`/`loading` の間、対象行に「実行中」を表示する（FR-07）。
@@ -278,7 +280,10 @@ ssh -i <identityFile>
 一括操作は対象サーバーの集合を確定したうえで、並列度 8 のセマフォを通して単体操作を実行する。
 
 - 実行中フラグが立っているサーバーは対象から除外し、`skipped`（理由 `busy`）として結果に含める。残りのサーバーは継続する。
-- 結果は `{ target, result, code }` の配列と、`{ ok, failed, skipped }` の要約を返す。
+- 結果は `{ target, result, code }` の配列と、`{ ok, failed, skipped }` の要約を返す。画面には「n 件成功 / m 件失敗 / k 件スキップ」として出す。
+- 対象集合の確定は `resolveBatchTargets`（`app/lib/power.server.ts`）が担う。全台（`all`）またはグループ ID を受け取り、サーバー ID で重複排除する。同じサーバーが複数グループに所属しても実行は 1 回である。
+- action は `intent=wake-group` / `intent=shutdown-group` と `scope`（`all` またはグループ ID）を受ける。未知のグループ ID と対象 0 台は `400` とし、操作しない。
+- 一括の `busy` は単体操作の「実行中（拒否）」と区別し、「スキップ」として表示する（対象から外したため）。
 - 部分失敗を全体の失敗に読み替えない（FR-11）。電源操作にトランザクションは無い。
 
 ### 6.5 予約実行
