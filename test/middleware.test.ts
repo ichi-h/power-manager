@@ -7,8 +7,17 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { RouterContextProvider } from "react-router";
 
-import { authMiddleware, authenticate, authContext } from "../app/lib/auth.server.ts";
-import { csrfMiddleware, isOriginAllowed } from "../app/lib/csrf.server.ts";
+import {
+  authMiddleware,
+  authenticate,
+  authContext,
+  __resetRuntimeConfigCache,
+} from "../app/lib/auth.server.ts";
+import {
+  csrfMiddleware,
+  isOriginAllowed,
+  __resetPublicOriginCache,
+} from "../app/lib/csrf.server.ts";
 import { loadRuntimeConfig } from "../app/lib/config.server.ts";
 import { validEnvironment } from "./support/environment.ts";
 
@@ -38,6 +47,10 @@ function middlewareArgs(requestObject: Request, context = new RouterContextProvi
 
 beforeEach(() => {
   vi.unstubAllEnvs();
+  // モジュールスコープの cache を消す。`vi.unstubAllEnvs()` は cache を消さないため、
+  // これを忘れると最初に評価した env の値へ固定される（98d8）。
+  __resetRuntimeConfigCache();
+  __resetPublicOriginCache();
 });
 
 describe("authenticate", () => {
@@ -158,6 +171,32 @@ describe("authMiddleware", () => {
     expect(result).toBeUndefined();
     expect(next).toHaveBeenCalledTimes(1);
   });
+});
+
+test("cache を消さないと別の env 値が読めないことはない（cache リセットの検証）", async () => {
+  // 1 回目は admin / power.example.ts.net でミドルウェアを通し、cache を作らせる。
+  vi.stubEnv("POWER_MANAGER_AUTH_PASSWORD_HASH", plaintextHash);
+  vi.stubEnv("POWER_MANAGER_AUTH_USERNAME", "admin");
+  vi.stubEnv("POWER_MANAGER_PUBLIC_ORIGIN", "https://power.example.ts.net");
+  vi.stubEnv("POWER_MANAGER_CONFIG_PATH", "/etc/power-manager/config.json");
+  vi.stubEnv("POWER_MANAGER_PORT", "8080");
+  vi.stubEnv("POWER_MANAGER_SSH_IDENTITY_FILE", "/keys/id");
+  vi.stubEnv("POWER_MANAGER_SSH_KNOWN_HOSTS_FILE", "/keys/kh");
+  const credentials = btoa(`admin:${plaintextPassword}`);
+  await authMiddleware(
+    middlewareArgs(request("/", { headers: { authorization: `Basic ${credentials}` } })),
+    stubNext() as unknown as Parameters<typeof authMiddleware>[1],
+  );
+
+  // 2 回目は別の env 値。beforeEach で cache を消しているため、新しい値が読める。
+  const runtime = loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_AUTH_USERNAME: "other" });
+  const wrongUser = btoa(`admin:${plaintextPassword}`);
+  const result = await authenticate(
+    request("/", { headers: { authorization: `Basic ${wrongUser}` } }),
+    runtime,
+  );
+  expect(result).toBeInstanceOf(Response);
+  expect((result as Response).status).toBe(401);
 });
 
 describe("csrfMiddleware / isOriginAllowed", () => {

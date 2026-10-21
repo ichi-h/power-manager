@@ -74,12 +74,23 @@ function parseBasicCredentials(header: string): { username: string; password: st
   };
 }
 
-/** 検証済みの実行時設定を 1 度だけ読み込む（初回の要求で評価する）。 */
+/**
+ * 検証済みの実行時設定を 1 度だけ読み込む（初回の要求で評価する）。
+ *
+ * テストからのみキャッシュを消す。`vi.unstubAllEnvs()` はモジュールスコープの
+ * cache を消さないため、env を差し替えたテストが古い値を読むのを防ぐ
+ * （`app/lib/config.server.ts` の cache と同じ課題）。
+ */
 let runtimeConfig: RuntimeConfig | undefined;
 
 function ensureRuntimeConfig(): RuntimeConfig {
   runtimeConfig ??= loadRuntimeConfig();
   return runtimeConfig;
+}
+
+/** テスト用: `runtimeConfig` の cache を消す。本番コードからは呼ばない。 */
+export function __resetRuntimeConfigCache(): void {
+  runtimeConfig = undefined;
 }
 
 /**

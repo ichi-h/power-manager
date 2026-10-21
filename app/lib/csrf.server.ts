@@ -18,12 +18,21 @@ import type { Route } from "../+types/root";
 /** 検証対象とする状態変更メソッド。 */
 const stateChangingMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-/** 検証済みの `publicOrigin`。初回の要求で評価する。 */
+/**
+ * 検証済みの `publicOrigin`。初回の要求で評価する。
+ *
+ * テストからのみキャッシュを消す（`app/lib/auth.server.ts` と同じ理由）。
+ */
 let publicOrigin: string | undefined;
 
 function ensurePublicOrigin(): string {
   publicOrigin ??= loadRuntimeConfig().publicOrigin;
   return publicOrigin;
+}
+
+/** テスト用: `publicOrigin` の cache を消す。本番コードからは呼ばない。 */
+export function __resetPublicOriginCache(): void {
+  publicOrigin = undefined;
 }
 
 /** Origin 不一致・欠落の 403 応答。 */
