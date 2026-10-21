@@ -163,5 +163,3 @@ export function createConfigStore(
 export function loadManagedConfigForStartup(configPath: string): Promise<ManagedConfig> {
   return loadFile(configPath);
 }
-
-export { loadFile as loadManagedConfigFile };

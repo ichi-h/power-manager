@@ -147,7 +147,9 @@ describe("予約の不正", () => {
     const input = validConfig();
     input.schedules.push(schedule({ target: {} }));
 
-    expectRejected(input, /schedules\.0\.target\.type: type に server か group/);
+    // 欠落は「必須」、値の不一致は語彙の案内として区別する（FR-09）。
+    expectRejected(input, /schedules\.0\.target\.type: 必須です/);
+    expectRejected(input, /schedules\.0\.target\.id: 必須です/);
   });
 
   test("対象が server / group 以外の type を持つ指定を拒否する", () => {

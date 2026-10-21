@@ -1,7 +1,7 @@
 /**
  * ドメイン型。
  *
- * サーバー・グループ・予約という管理対象の定義と、電源操作・死活状態・結果の語彙を
+ * サーバー・グループ・予約という管理対象の定義と、電源操作・対象種別・繰り返しの語彙を
  * ここに集約する。設定 JSON のスキーマ（`app/lib/runtime-config.server.ts`）と、
  * 画面・操作・予約の各実装はこの型に合わせる。
  *
@@ -10,48 +10,11 @@
  * 片方だけ増やしたときに気付けない。
  */
 
-/** 死活状態（FR-03）。`unknown` はまだ確認結果がない初期状態。 */
-export const serverStates = ["online", "offline", "unknown"] as const;
-
-/** 死活状態。 */
-export type ServerState = (typeof serverStates)[number];
-
 /** 電源操作の種別（FR-04, FR-05）。 */
 export const powerOperations = ["wake", "shutdown"] as const;
 
 /** 電源操作の種別。 */
 export type PowerOperation = (typeof powerOperations)[number];
-
-/**
- * 操作結果の種別（FR-07）。
- *
- * 画面に出すのはこの 4 種類だけで、内部エラーの詳細はここに含めない。
- * - `success`: 成功
- * - `failed`: 失敗
- * - `busy`: 実行中だったため拒否
- * - `skipped`: 予約として発火しなかった（busy・時刻超過）
- */
-export const operationResults = ["success", "failed", "busy", "skipped"] as const;
-
-/** 操作結果の種別。 */
-export type OperationResult = (typeof operationResults)[number];
-
-/**
- * 失敗・スキップの分類（`docs/architecture.md` 7 章）。
- *
- * `invalid_configuration` は設定 JSON の検証失敗を表し、再読込の結果に使う。
- * 残りは操作の失敗分類・スキップ理由に使う。
- */
-export const errorCodes = [
-  "invalid_configuration",
-  "ssh_unavailable",
-  "operation_failed",
-  "busy",
-  "missed_schedule",
-] as const;
-
-/** 失敗・スキップの分類。 */
-export type ErrorCode = (typeof errorCodes)[number];
 
 /** 曜日（FR-12）。`days` の重複・空配列は検証で拒否する。 */
 export const weekdays = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;

@@ -17,7 +17,14 @@
  */
 import { z } from "zod";
 
-import { weekdays, type ManagedConfig } from "./model.ts";
+import {
+  powerOperations,
+  repeatKinds,
+  targetTypes,
+  weekdays,
+  type ManagedConfig,
+  type RepeatKind,
+} from "./model.ts";
 
 /** 検証メッセージ。項目名は指摘の path に出るため、ここでは理由だけを書く。 */
 const messages = {
@@ -31,6 +38,9 @@ const messages = {
   surroundingWhitespace: "前後に空白を含めないでください",
   unknownKey: "未知の項目です",
   version: "2 を指定してください（v1 形式は未対応です）",
+  operation: `${powerOperations.join(" か ")} を指定してください`,
+  targetType: `type に ${targetTypes.join(" か ")} を指定し、id を 1 つだけ持たせてください`,
+  repeatKind: `kind に ${repeatKinds.join(" か ")} を指定してください（weekly は days が必要です）`,
   macAddress: "MAC アドレスの形式（XX:XX:XX:XX:XX:XX）で指定してください",
   ipv4: "IPv4 アドレス（例 192.168.1.255）で指定してください",
   port: "1 から 65535 の整数で指定してください",
@@ -148,47 +158,42 @@ const groupSchema = z.strictObject(
 );
 
 /**
- * 予約の対象。「サーバー 1 台」と「グループ 1 つ」を判別可能な形に固定し、
- * 両方を持つ指定・どちらも持たない指定を作れなくする（FR-09）。
+ * 予約の対象。「サーバー 1 台」と「グループ 1 つ」を `type` で判別できる形に固定する
+ * （FR-09）。種類の語彙は `app/lib/model.ts` の `targetTypes` を唯一の定義にする。
  */
-const targetSchema = z.discriminatedUnion(
-  "type",
-  [
-    z.strictObject({ type: z.literal("server"), id: stringValue }, { error: objectMessage }),
-    z.strictObject({ type: z.literal("group"), id: stringValue }, { error: objectMessage }),
-  ],
+const targetSchema = z.strictObject(
   {
-    error: (issue) =>
-      issue.input === undefined
-        ? messages.required
-        : "type に server か group を指定し、id を 1 つだけ持たせてください",
+    type: z.enum(targetTypes, { error: typeMessage(messages.targetType) }),
+    id: stringValue,
   },
+  { error: objectMessage },
 );
 
-/** 繰り返し（FR-12）。`days` は `weekly` だけが持つ。 */
-const repeatSchema = z.discriminatedUnion(
-  "kind",
-  [
-    z.strictObject(
-      { kind: z.literal("daily"), time: timeValue },
-      { error: objectMessage },
-    ),
-    z.strictObject(
-      {
-        kind: z.literal("weekly"),
-        days: z.array(weekdayValue, { error: typeMessage(messages.arrayType) }),
-        time: timeValue,
-      },
-      { error: objectMessage },
-    ),
-  ],
-  {
-    error: (issue) =>
-      issue.input === undefined
-        ? messages.required
-        : "kind に daily か weekly を指定してください（weekly は days が必要です）",
-  },
-);
+/**
+ * 繰り返し（FR-12）。`days` は `weekly` だけが持つ。
+ *
+ * `satisfies Record<RepeatKind, ...>` により、`app/lib/model.ts` の `repeatKinds` に
+ * 種別を足したとき、ここへスキーマを足し忘れると型検査で落ちる。
+ */
+const repeatSchemas = {
+  daily: z.strictObject(
+    { kind: z.literal("daily"), time: timeValue },
+    { error: objectMessage },
+  ),
+  weekly: z.strictObject(
+    {
+      kind: z.literal("weekly"),
+      days: z.array(weekdayValue, { error: typeMessage(messages.arrayType) }),
+      time: timeValue,
+    },
+    { error: objectMessage },
+  ),
+} satisfies Record<RepeatKind, z.ZodType>;
+
+const repeatSchema = z.discriminatedUnion("kind", [repeatSchemas.daily, repeatSchemas.weekly], {
+  error: (issue) =>
+    issue.input === undefined ? messages.required : messages.repeatKind,
+});
 
 /** 予約 1 件（`docs/operations.md` 2.3）。 */
 const scheduleSchema = z.strictObject(
@@ -197,9 +202,7 @@ const scheduleSchema = z.strictObject(
     name: stringValue,
     enabled: z.boolean({ error: typeMessage(messages.booleanType) }),
     target: targetSchema,
-    operation: z.enum(["wake", "shutdown"], {
-      error: "wake か shutdown を指定してください",
-    }),
+    operation: z.enum(powerOperations, { error: messages.operation }),
     repeat: repeatSchema,
   },
   { error: objectMessage },
