@@ -16,8 +16,13 @@ import { validManagedConfig, validSchedule } from "./support/managed-config.ts";
  * 設定ストアは「読み込む → 検証する → 成功時だけ差し替える」の順序が仕様である
  * （FR-08, NFR-13）。ファイル読込みまで含めて確かめたいので、実際の一時ファイルを使う。
  *
- * 差し替えの「原子性」は、失敗したときに `current()` が同じオブジェクトを返し続ける
- * ことで観測する。値の比較では「同じ内容の別オブジェクト」との区別が付かない。
+ * 差し替えの「原子性」は 2 通りで観測する。
+ *
+ * 1. 参照の同一性: 失敗したときに `current()` が同じオブジェクトを返し続けること。
+ * 2. 内容の不変: `structuredClone` で取ったスナップショットと `toEqual` で一致すること。
+ *
+ * 1 だけでは「有効設定のオブジェクトを項目単位で書き換える」失敗モード（参照は同じまま
+ * 中身が変わる）を検出できないため、2 を併せて確かめる。
  */
 let directory: string;
 let configPath: string;
@@ -94,6 +99,7 @@ describe("再読込", () => {
   test("失敗時は旧設定を維持し、理由を返す（原子性）", async () => {
     const configStore = await store();
     const before = configStore.current();
+    const snapshot = structuredClone(before);
 
     await writeFile(configPath, JSON.stringify({ ...validManagedConfig(), version: 1 }));
     const result = await configStore.reload();
@@ -104,11 +110,13 @@ describe("再読込", () => {
     expect(result.issues.length).toBeGreaterThan(0);
     // 同一オブジェクトが残っている = 一部だけ反映された状態が無い。
     expect(configStore.current()).toBe(before);
+    expect(configStore.current()).toEqual(snapshot);
   });
 
   test("相互参照の失敗でも旧設定を維持する", async () => {
     const configStore = await store();
     const before = configStore.current();
+    const snapshot = structuredClone(before);
 
     const broken = validManagedConfig();
     (broken.schedules as unknown[]).push(validSchedule({ target: { type: "group", id: "missing" } }));
@@ -121,11 +129,13 @@ describe("再読込", () => {
       "group missing が定義されていません",
     );
     expect(configStore.current()).toBe(before);
+    expect(configStore.current()).toEqual(snapshot);
   });
 
   test("ファイルが消えた場合も旧設定を維持する", async () => {
     const configStore = await store();
     const before = configStore.current();
+    const snapshot = structuredClone(before);
     await rm(configPath);
 
     const result = await configStore.reload();
@@ -134,17 +144,20 @@ describe("再読込", () => {
     if (result.ok) throw new Error("unreachable");
     expect(result.reason).toContain("設定ファイルが見つかりません");
     expect(configStore.current()).toBe(before);
+    expect(configStore.current()).toEqual(snapshot);
   });
 
   test("JSON が壊れていても旧設定を維持する", async () => {
     const configStore = await store();
     const before = configStore.current();
+    const snapshot = structuredClone(before);
     await writeFile(configPath, "not json");
 
     const result = await configStore.reload();
 
     expect(result.ok).toBe(false);
     expect(configStore.current()).toBe(before);
+    expect(configStore.current()).toEqual(snapshot);
   });
 
   test("失敗のあとに成功すれば差し替わる（旧設定は維持され続けない）", async () => {
