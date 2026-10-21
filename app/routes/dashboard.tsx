@@ -334,10 +334,12 @@ function OperationButton({
   server,
   operation,
   fetcher,
+  disabled = false,
 }: {
   server: DashboardLoaderData['servers'][number];
   operation: PowerOperation;
   fetcher: { submit: (target: HTMLFormElement) => void };
+  disabled?: boolean;
 }) {
   return (
     <form
@@ -358,7 +360,10 @@ function OperationButton({
     >
       <input type="hidden" name="intent" value={operation} />
       <input type="hidden" name="target" value={server.id} />
-      <button type="submit">{operationLabels[operation]}</button>
+      {/* 進行中は同じ行の 2 つのボタンを閉じ、二重送信と結果の上書きを防ぐ（FR-07）。 */}
+      <button type="submit" disabled={disabled}>
+        {operationLabels[operation]}
+      </button>
     </form>
   );
 }
@@ -383,7 +388,38 @@ function ServerRow({
 
   const running =
     wakeFetcher.state !== 'idle' || shutdownFetcher.state !== 'idle';
-  const result = wakeFetcher.data ?? shutdownFetcher.data;
+
+  // 行に出す結果は「最後に完了した操作」だけにする。2 つの fetcher を固定の順序で
+  // 優先すると、後から完了した操作の結果が隠れる（起動成功の後の停止失敗など）。
+  // 完了のたびに結果と送信連番を記録し、連番の大きいほうを採る（FR-07）。
+  const [latest, setLatest] = useState<{
+    readonly result: OperationResult;
+    readonly submittedAt: number;
+  }>();
+  const submitCount = useRef(0);
+  const seen = useRef<
+    Partial<Record<PowerOperation, { data: OperationResult; count: number }>>
+  >({});
+
+  useEffect(() => {
+    for (const [operation, fetcher] of [
+      ['wake', wakeFetcher],
+      ['shutdown', shutdownFetcher],
+    ] as const) {
+      if (fetcher.state !== 'idle' || fetcher.data === undefined) continue;
+      const previous = seen.current[operation];
+      // 同じ応答を繰り返し処理しない（再レンダーで送信連番を取り直さない）。
+      if (previous?.data === fetcher.data) continue;
+      submitCount.current += 1;
+      const entry = { data: fetcher.data, count: submitCount.current };
+      seen.current[operation] = entry;
+      setLatest((current) =>
+        current === undefined || entry.count > current.submittedAt
+          ? { result: fetcher.data!, submittedAt: entry.count }
+          : current,
+      );
+    }
+  }, [wakeFetcher.state, wakeFetcher.data, shutdownFetcher.state, shutdownFetcher.data]);
 
   return (
     <li>
@@ -392,16 +428,23 @@ function ServerRow({
         所属グループ: {groupNames.length === 0 ? 'なし' : groupNames.join('、')}
       </span>
       <span>状態: {stateLabels[state]}</span>
-      <OperationButton server={server} operation="wake" fetcher={wakeFetcher} />
+      <OperationButton
+        server={server}
+        operation="wake"
+        fetcher={wakeFetcher}
+        disabled={running}
+      />
       <OperationButton
         server={server}
         operation="shutdown"
         fetcher={shutdownFetcher}
+        disabled={running}
       />
       {running ? <span role="status">実行中</span> : null}
-      {running || result === undefined ? null : (
+      {running || latest === undefined ? null : (
         <span role="status">
-          {operationLabels[result.operation]}: {resultLabels[result.result]}
+          {operationLabels[latest.result.operation]}:{' '}
+          {resultLabels[latest.result.result]}
         </span>
       )}
     </li>
