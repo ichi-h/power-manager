@@ -13,7 +13,7 @@ buildNpmPackage {
 
   # `nix build` が表示するハッシュで固定する。
   npmDepsFetcherVersion = 2;
-  npmDepsHash = "sha256-LG9fcT1bZ/uZmfsrxw0aj6PhEGdCcCdFu+tgLaPiFL4=";
+  npmDepsHash = "sha256-SM4O5Z3SMoBUQww7vtXnncjsBigCbzMGF0oUCB4SS6E=";
   nodejs = nodejs_24;
 
   nativeBuildInputs = [ makeWrapper ];

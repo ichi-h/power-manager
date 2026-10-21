@@ -178,7 +178,10 @@ describe("公開 Origin", () => {
     "http://power.example.ts.net",
     "http://127.0.0.1:5173",
     "http://[::1]:5173",
+    // パス・クエリ・フラグメント・資格情報は Origin ではない。
     "https://power.example.ts.net/some/path",
+    "https://power.example.ts.net/?query=1",
+    "https://power.example.ts.net/#fragment",
     "https://user:pass@power.example.ts.net",
     "ftp://power.example.ts.net",
     "power.example.ts.net",
@@ -252,6 +255,45 @@ describe("パスワードハッシュ", () => {
     expect(() => loadRuntimeConfig({ ...validEnvironment(), [name]: secret })).toThrow(
       expect.objectContaining({ message: expect.not.stringContaining(secret) }),
     );
+  });
+});
+
+describe("検証メッセージの組み立て", () => {
+  test("複数の不正を 1 行にまとめ、変数名をすべて挙げる", () => {
+    const error = (() => {
+      try {
+        loadRuntimeConfig({
+          ...validEnvironment(),
+          POWER_MANAGER_PORT: "abc",
+          POWER_MANAGER_AUTH_USERNAME: "a:b",
+        });
+        return null;
+      } catch (caught) {
+        return caught as Error;
+      }
+    })();
+
+    expect(error?.message).toMatch(/^環境変数が不正です（/);
+    expect(error?.message).toContain("POWER_MANAGER_PORT");
+    expect(error?.message).toContain("POWER_MANAGER_AUTH_USERNAME");
+    // 標準エラーへ 1 行で出すため、改行を含めない。
+    expect(error?.message).not.toContain("\n");
+  });
+
+  test("同じ変数・同じ理由の指摘は重複させない", () => {
+    const messages = (() => {
+      try {
+        loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_PORT: "0" });
+        return [];
+      } catch (caught) {
+        const message = (caught as Error).message;
+        // 「環境変数が不正です（... / ...）」の括弧の中を分解する。
+        const inner = message.slice(message.indexOf("（") + 1, message.lastIndexOf("）"));
+        return inner.split(" / ");
+      }
+    })();
+
+    expect(new Set(messages).size).toBe(messages.length);
   });
 });
 
