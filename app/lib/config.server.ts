@@ -10,6 +10,7 @@
  */
 import path from "node:path";
 
+import { createContext } from "react-router";
 import { z } from "zod";
 
 /** 実行モード。本番の環境変数ファイルでは `production` を指定する。 */
@@ -35,6 +36,13 @@ export type RuntimeConfig = {
   sshKnownHostsFile: string;
   nodeEnv: NodeEnvironment;
 };
+
+/**
+ * 検証済みの実行時設定を loader/action へ渡すためのキー。
+ * `server/app.ts` が `createLoadContext` で設定し、loader/action は
+ * `context.get(configContext)` で参照する。
+ */
+export const configContext = createContext<RuntimeConfig>();
 
 /**
  * 環境変数の検証失敗。起動時は終了コード 78 の対象になる（NFR-05, NFR-06）。
