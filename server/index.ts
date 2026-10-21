@@ -81,18 +81,24 @@ server.on("error", (error) => {
   process.exit(1);
 });
 
-const shutdownTimeout = setTimeout(() => {
-  process.exit(1);
-}, forcedExitMilliseconds).unref();
-
 let shuttingDown = false;
+
+/**
+ * 終了シグナルを受けてから接続の排出を待つ。`forcedExitMilliseconds` の間に閉じきれなければ
+ * 強制終了する。タイマーは shutdown のたびに張り、正常終了時は必ず解除する。
+ * 起動時に張ると、正常に動いているプロセスが時間経過だけで落ちるため張らない。
+ */
 function shutdown(signal: NodeJS.Signals): void {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(JSON.stringify({ event: "shutdown", signal }));
 
+  const forcedExitTimeout = setTimeout(() => {
+    process.exit(1);
+  }, forcedExitMilliseconds).unref();
+
   server.close(() => {
-    clearTimeout(shutdownTimeout);
+    clearTimeout(forcedExitTimeout);
     process.exit(0);
   });
 }

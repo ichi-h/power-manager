@@ -79,6 +79,20 @@ async function waitForStarted() {
   throw new Error("起動待ちがタイムアウトしました");
 }
 
+/**
+ * 起動直後に shutdown 用のタイマーが張られていないことを確認する。
+ * 起動時に無条件で強制終了タイマーを張ると、正常起動したプロセスが 5 秒後に落ちる。
+ */
+async function checkStaysAlive() {
+  const survivalMilliseconds = 6_000;
+  await delay(survivalMilliseconds);
+  if (child.exitCode !== null) {
+    throw new Error(
+      `起動から ${survivalMilliseconds / 1000} 秒以内に終了しました (exit ${child.exitCode})\n${stderr}`,
+    );
+  }
+}
+
 function stopServer() {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -132,6 +146,7 @@ function checkConfigurationError() {
 
 try {
   await waitForStarted();
+  await checkStaysAlive();
   const { code } = await stopServer();
   if (code !== 0) {
     throw new Error(`SIGTERM 後の終了コードが 0 ではありません: ${code}\n${stderr}`);
