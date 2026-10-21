@@ -78,6 +78,8 @@ power-manager（Node.js 24 プロセス、専用 system user）
 
 1. `server/index.ts` が `server/startup.ts` の `startRuntime()` を呼び、環境変数を読み、Zod で検証する。1 つでも不正なら標準エラーへ `startup_failed` を 1 行出し、待受を開始せずに終了コード `78`（設定エラー）で終了する（NFR-06, NFR-05）。`server/app.ts` は検証済みの設定を受け取るだけで、環境変数は読まない。
 2. 管理対象 JSON を読み、検証してメモリへ展開する。失敗時も終了コード `78` で終了する（FR-08, FR-09）。
+
+設定不備以外の例外（実装の不具合・予期しない I/O 例外）は `78` で落とさない。`78` は `RestartPreventExitStatus` に指定してあり再起動されないため、ここで `78` を使うと再起動も失敗の記録も起きない無言死になる。`server/startup.ts` の `exitAfterStartupFailure` が例外の種別で分岐し、設定不備なら `78`（1 行は `startRuntime` が出力済み）、それ以外なら `startup_failed`（`code: "operation_failed"`、`reason` は例外の名前）を 1 行出して終了コード `1` で落とす（NFR-05, NFR-10）。
 3. 実行結果リングバッファとスケジューラを初期化する。
 4. `createRequestListener` で HTTP サーバーを組み立て、`127.0.0.1:$POWER_MANAGER_PORT` で待受を開始する。
 5. 起動完了を構造化ログへ 1 行で出す。
@@ -96,9 +98,9 @@ import { createServer } from "node:http";
 import { createAppListener } from "./app.ts";
 import { startRuntime } from "./startup.ts";
 
-// 起動時に 1 度だけ検証する（失敗すれば exit 78）。
-const runtime = startRuntime();
-const listener = createAppListener(runtime);
+// 起動時に 1 度だけ検証する。設定不備は exit 78、それ以外の例外は exit 1。
+const { runtime, configStore } = await startRuntime();
+const listener = createAppListener(runtime, configStore);
 
 const server = createServer(listener);
 server.listen(runtime.port, "127.0.0.1");
@@ -106,19 +108,20 @@ server.listen(runtime.port, "127.0.0.1");
 
 ```ts
 // server/app.ts（概略）
-export function createAppListener(runtime: RuntimeConfig) {
+export function createAppListener(runtime: RuntimeConfig, configStore: ConfigStore) {
   return createRequestListener({
     // ビルド成果物を読み込み、handleError と allowedActionOrigins を差し替える。
     build: () => loadServerBuild(runtime),
     mode: "production",
-    getLoadContext: () => createLoadContext(runtime),
+    getLoadContext: () => createLoadContext(runtime, configStore),
   });
 }
 
-export function createLoadContext(runtime: RuntimeConfig) {
+export function createLoadContext(runtime: RuntimeConfig, configStore: ConfigStore) {
   const context = new RouterContextProvider();
   // 載せるのは公開値だけ。秘密値は認証ミドルウェアが runtime から直接読む。
   context.set(configContext, toPublicRuntimeConfig(runtime));
+  context.set(configStoreContext, configStore);
   return context;
 }
 ```
@@ -175,7 +178,7 @@ export function createLoadContext(runtime: RuntimeConfig) {
 
 `app/lib/config-store.server.ts` が有効設定の保持と再読込を担う。再読込は「読込み → 全体検証 → 成功時のみ参照の差し替え」の順で行い、失敗したときは旧設定を維持したまま理由と指摘を値として返す（FR-08、NFR-13）。例外にしないのは、再読込の失敗がエラーバウンダリではなく画面の結果表示に載る対象だからである（FR-07）。
 
-起動時の準備物は `server/startup.ts` の `startRuntime()` が `{ runtime, configStore }` としてまとめて返し、`server/app.ts` の `createAppListener(runtime, configStore)` がそれを受け取る。`server/index.ts` の責務は待受とシグナル処理、終了コードに限定したままである。`invalid_configuration` は環境変数の検証失敗・管理対象 JSON の検証失敗・待受アドレスの使用不可で共用する。いずれも再起動では解消せず、運用者が設定を直すまで同じ結果になるため、区別せず同じ終了コード 78 に集約している。
+起動時の準備物は `server/startup.ts` の `startRuntime()` が `{ runtime, configStore }` としてまとめて返し、`server/app.ts` の `createAppListener(runtime, configStore)` がそれを受け取る。`server/index.ts` の責務は待受とシグナル処理、終了コードに限定したままである。`invalid_configuration` は環境変数の検証失敗・管理対象 JSON の検証失敗・待受アドレスの使用不可で共用する。前 2 つは運用者が設定を直すまで同じ結果になるため再起動で解消せず、待受アドレスの使用不可も待受開始前の判定であり同じく再試行では進展しないため、区別せず同じ終了コード 78 に集約している。待受中の異常終了は別経路（`server: "error"` のログと終了コード 1）で扱う。
 
 ビルド時のみ Tailwind CSS（`tailwindcss`、`@tailwindcss/vite`）を devDependency として使う。ビルド時に CSS を生成するだけで、実行時のサーバー依存は増えない。スタイルは各コンポーネントのユーティリティクラスに直接記述し、共通の配色・フォントだけを `app/app.css` の `@theme` で定義する。明暗の切り替えは `color-scheme` と CSS のシステム色（`Canvas` / `CanvasText`）に委ねる。
 
