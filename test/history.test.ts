@@ -15,6 +15,7 @@ import {
   requireHistory,
 } from '../app/lib/history.server.ts';
 import type { PowerOperationRecord } from '../app/lib/power.server.ts';
+import { loader as historyLoader } from '../app/routes/api.history.tsx';
 
 /** テスト用の要素 1 件。順序を見分けるため `target.id` に連番を使う。 */
 function record(id: string): PowerOperationRecord {
@@ -166,5 +167,36 @@ describe('load context', () => {
     vi.resetModules();
     const reloaded = await import('../app/lib/history.server.ts');
     expect(reloaded.historyContext).toBe(historyContext);
+  });
+});
+
+describe('/api/history loader', () => {
+  /** 履歴を差し替えた load context を作る。 */
+  function contextWith(records: ReadonlyArray<PowerOperationRecord>) {
+    const history = createOperationHistory();
+    for (const item of records) history.push(item);
+    const context = new RouterContextProvider();
+    context.set(historyContext, history);
+    return context;
+  }
+
+  test('直近の実行結果を新しい順で application/json として返す', async () => {
+    const response = historyLoader({
+      context: contextWith([record('a'), record('b')]),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe(
+      'application/json; charset=utf-8',
+    );
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(JSON.parse(await response.text())).toEqual({
+      records: [record('b'), record('a')],
+    });
+  });
+
+  test('履歴が空でも空配列を返す', async () => {
+    const response = historyLoader({ context: contextWith([]) });
+    expect(JSON.parse(await response.text())).toEqual({ records: [] });
   });
 });

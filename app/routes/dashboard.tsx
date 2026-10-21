@@ -17,6 +17,7 @@ import { useFetcher, type RouterContext } from 'react-router';
 
 import type { Route } from './+types/dashboard';
 import { requireConfigStore } from '../lib/config-store.server.ts';
+import type { HistoryResponse } from '../lib/history-context.ts';
 import { requireHistory } from '../lib/history.server.ts';
 import type {
   ManagedConfig,
@@ -271,6 +272,16 @@ export function toReasonLabel(record: {
 /** 状態取得のリソースルートのパス（FR-02）。 */
 const statusPath = '/api/status';
 
+/** 「最近の実行」取得のリソースルートのパス（FR-02, FR-13）。 */
+const historyPath = '/api/history';
+
+/** ポーリングに使う `fetcher` のうち画面が参照する部分。 */
+type PollingFetcher<T> = {
+  load: (href: string) => void;
+  data?: T;
+  state: string;
+};
+
 /**
  * 15 秒ごとに状態だけを更新する（FR-02）。
  *
@@ -284,7 +295,7 @@ const statusPath = '/api/status';
  */
 export function useStatusAutoRefresh(
   initialStates: Readonly<Record<string, ServerState>>,
-  fetcher: { load: (href: string) => void; data?: unknown; state: string },
+  fetcher: PollingFetcher<unknown>,
 ): Readonly<Record<string, ServerState>> {
   const [states, setStates] = useState(initialStates);
   const lastData = useRef<unknown>(undefined);
@@ -294,6 +305,12 @@ export function useStatusAutoRefresh(
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
 
+  // loader が初期状態を返し直したら採り直す（クライアント遷移で戻った場合など）。
+  // `useState` の初期値は最初のレンダーでしか使われないため、明示的に追従させる。
+  useEffect(() => {
+    setStates(initialStates);
+  }, [initialStates]);
+
   useEffect(() => {
     if (fetcher.data === undefined || fetcher.data === lastData.current) return;
     lastData.current = fetcher.data;
@@ -301,29 +318,102 @@ export function useStatusAutoRefresh(
     if (next !== null) setStates((previous) => ({ ...previous, ...next }));
   }, [fetcher.data]);
 
-  useEffect(() => {
-    let timer: ReturnType<typeof setInterval> | undefined;
+  usePolling(fetcher, statusPath);
 
-    const tick = () => {
-      fetcherRef.current.load(statusPath);
+  return states;
+}
+
+/**
+ * 「最近の実行」を同じ周期で更新する（FR-02, FR-13）。
+ *
+ * ページの loader は再実行しない（`docs/architecture.md` 4.2）。状態の自動更新と同じ
+ * タイマーで `/api/history` だけを読み直し、取得できた分だけ差し替える。
+ * 4xx/5xx・ネットワーク失敗では直前の履歴を維持する。
+ */
+export function useHistoryAutoRefresh(
+  initialRecords: ReadonlyArray<PowerOperationRecord>,
+  fetcher: PollingFetcher<unknown>,
+): ReadonlyArray<PowerOperationRecord> {
+  const [records, setRecords] = useState(initialRecords);
+  const lastData = useRef<unknown>(undefined);
+
+  useEffect(() => {
+    setRecords(initialRecords);
+  }, [initialRecords]);
+
+  useEffect(() => {
+    if (fetcher.data === undefined || fetcher.data === lastData.current) return;
+    lastData.current = fetcher.data;
+    const next = parseHistoryResponse(fetcher.data);
+    if (next !== null) setRecords(next);
+  }, [fetcher.data]);
+
+  usePolling(fetcher, historyPath);
+
+  return records;
+}
+
+/**
+ * 一定間隔で `href` を読み込む（FR-02, NFR-08）。
+ *
+ * - マウント直後はタイマーを張るだけで、周期の開始を待つ。loader（あるいは直前の読み込み）
+ *   が取得した結果を捨てて同じ確認をやり直さないためである（NFR-08）。
+ * - `visible` に戻った時点では即座に 1 回読み込む（最大 15 秒の空白を作らない）。
+ * - `visibilityState` が `hidden` の間はタイマーを止める。
+ * - 前周期の読み込みが終わっていないときは次周期を飛ばし、同一対象への確認を
+ *   重複して起動しない。
+ */
+function usePolling(fetcher: PollingFetcher<unknown>, href: string): void {
+  const fetcherRef = useRef(fetcher);
+  fetcherRef.current = fetcher;
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const schedule = () => {
+      timer = setTimeout(tick, statusRefreshIntervalMs);
     };
 
+    const load = () => {
+      fetcherRef.current.load(href);
+    };
+
+    const tick = () => {
+      timer = undefined;
+      // 前周期の読み込みが終わっていなければ、この周期は飛ばす（NFR-08）。
+      if (fetcherRef.current.state !== 'idle') {
+        schedule();
+        return;
+      }
+      load();
+      schedule();
+    };
+
+    /** タイマーを張る。即時の読み込みはしない（loader 直後の二重確認を避ける）。 */
     const start = () => {
       if (timer !== undefined) return;
-      // 表示に戻った時点で即座に 1 回確認する（最大 15 秒の空白を作らない）。
-      tick();
-      timer = setInterval(tick, statusRefreshIntervalMs);
+      schedule();
+    };
+
+    /** 即座に 1 回読み込み、周期を開始する（表示に戻った時点で使う）。 */
+    const startNow = () => {
+      stop();
+      load();
+      start();
     };
 
     const stop = () => {
       if (timer === undefined) return;
-      clearInterval(timer);
+      clearTimeout(timer);
       timer = undefined;
     };
 
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') start();
-      else stop();
+      if (document.visibilityState === 'visible') {
+        startNow();
+      } else {
+        stop();
+      }
     };
 
     if (document.visibilityState !== 'hidden') start();
@@ -333,9 +423,7 @@ export function useStatusAutoRefresh(
       stop();
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, []);
-
-  return states;
+  }, [href]);
 }
 
 /**
@@ -358,6 +446,43 @@ export function parseStatusResponse(
     }
   }
   return parsed;
+}
+
+/**
+ * `/api/history` の応答を検証する。
+ *
+ * 想定外の形（リバースプロキシのエラーページ等）では `null` を返し、表示を変えない。
+ * レコードとして解釈できない要素は捨てる。
+ */
+export function parseHistoryResponse(
+  value: unknown,
+): ReadonlyArray<PowerOperationRecord> | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const records = (value as Partial<HistoryResponse>).records;
+  if (!Array.isArray(records)) return null;
+
+  return records.filter(isOperationRecord);
+}
+
+/** 画面が扱える実行結果の形かどうか。 */
+function isOperationRecord(value: unknown): value is PowerOperationRecord {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Partial<PowerOperationRecord>;
+  if (typeof record.at !== 'string') return false;
+  if (record.operation !== 'wake' && record.operation !== 'shutdown') {
+    return false;
+  }
+  if (
+    record.result !== 'succeeded' &&
+    record.result !== 'failed' &&
+    record.result !== 'skipped'
+  ) {
+    return false;
+  }
+  const target = record.target;
+  if (typeof target !== 'object' || target === null) return false;
+  if (target.type !== 'server' && target.type !== 'group') return false;
+  return typeof target.id === 'string';
 }
 
 /** 1 行の操作ボタン。停止は確認ダイアログを出し、拒否時は送信しない（FR-05, SEC-07）。 */
@@ -504,7 +629,9 @@ function RecentRow({ record }: { record: PowerOperationRecord }) {
 
 export default function Dashboard({ loaderData }: Route.ComponentProps) {
   const statusFetcher = useFetcher<StatusResponse>();
+  const historyFetcher = useFetcher<HistoryResponse>();
   const states = useStatusAutoRefresh(loaderData.states, statusFetcher);
+  const recent = useHistoryAutoRefresh(loaderData.recent, historyFetcher);
   const groupNames = new Map(
     loaderData.groups.map((group) => [group.id, group.name]),
   );
@@ -529,11 +656,11 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
         </ul>
       )}
       <h2>最近の実行</h2>
-      {loaderData.recent.length === 0 ? (
+      {recent.length === 0 ? (
         <p>まだ実行はありません。</p>
       ) : (
         <ul>
-          {loaderData.recent.map((record) => (
+          {recent.map((record) => (
             <RecentRow
               key={`${record.at}:${record.target.type}:${record.target.id}`}
               record={record}

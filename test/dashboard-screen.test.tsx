@@ -119,9 +119,14 @@ async function advance(ms: number) {
   });
 }
 
-/** 疑似タイマーを 1ms ずつ進め、条件が満たされるまで待つ（上限 1 秒）。 */
+/**
+ * 疑似タイマーを 1ms ずつ進め、条件が満たされるまで待つ（上限 2 周期）。
+ *
+ * `vi.advanceTimersByTimeAsync` をまとめて進めると、タイマーの登録時刻のずれで 1 周期分の
+ * 発火を取りこぼすことがあるため、1ms ずつ進めて判定する。
+ */
 async function advanceUntil(done: () => boolean) {
-  for (let elapsed = 0; elapsed < 1_000 && !done(); elapsed += 1) {
+  for (let elapsed = 0; elapsed < statusRefreshIntervalMs * 2 && !done(); elapsed += 1) {
     await advance(1);
   }
 }
@@ -298,20 +303,23 @@ describe('状態の自動更新', () => {
     expect(statusRefreshIntervalMs).toBe(15_000);
   });
 
-  test('表示直後に 1 回取得し、15 秒ごとに繰り返す', async () => {
+  test('loader の結果を起点に、15 秒ごとに 1 回だけ取得する（FR-02, NFR-08）', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const onStatusLoad = vi.fn();
     renderDashboard(loaderData(), { onStatusLoad });
 
-    await advanceUntil(() => onStatusLoad.mock.calls.length === 1);
+    // 周期の開始までに取得を重ねない（マウント直後の二重確認をしない）。
+    await advance(1_000);
+    expect(onStatusLoad).not.toHaveBeenCalled();
+
+    await advanceUntil(() => onStatusLoad.mock.calls.length >= 1);
     expect(onStatusLoad).toHaveBeenCalledTimes(1);
 
-    // 間隔の直前では追加の取得をしない。
-    await advance(statusRefreshIntervalMs - 1);
+    // 次の周期までは追加の取得をしない。
+    await advance(1_000);
     expect(onStatusLoad).toHaveBeenCalledTimes(1);
 
-    await advance(1);
-    await advanceUntil(() => onStatusLoad.mock.calls.length === 2);
+    await advanceUntil(() => onStatusLoad.mock.calls.length >= 2);
     expect(onStatusLoad).toHaveBeenCalledTimes(2);
   });
 
@@ -330,7 +338,7 @@ describe('状態の自動更新', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const onStatusLoad = vi.fn();
     renderDashboard(loaderData(), { onStatusLoad });
-    await advanceUntil(() => onStatusLoad.mock.calls.length === 1);
+    await advanceUntil(() => onStatusLoad.mock.calls.length >= 1);
     expect(onStatusLoad).toHaveBeenCalledTimes(1);
 
     Object.defineProperty(document, 'visibilityState', {
@@ -373,16 +381,20 @@ describe('状態の自動更新', () => {
           return new Response('boom', { status: 500 });
         },
       },
+      {
+        // 履歴の取得も同じ周期で走るため、ルートを用意しないと 404 になる。
+        path: '/api/history',
+        loader: () => new Response('boom', { status: 500 }),
+      },
     ]);
     const { container } = render(<Stub initialEntries={['/']} />);
 
-    await advanceUntil(() => calls === 1);
+    await advanceUntil(() => calls >= 1);
     expect(calls).toBe(1);
     // 失敗しても初期状態の表示が残る。
     expect(container.textContent).toContain('状態: オンライン');
 
-    await advance(statusRefreshIntervalMs);
-    await advanceUntil(() => calls === 2);
+    await advanceUntil(() => calls >= 2);
     expect(calls).toBe(2);
   });
 });
@@ -448,7 +460,6 @@ describe('再現（b356 で見つかった欠陥）', () => {
     expect(screen.queryByText('まだ実行はありません。')).toBeDefined();
 
     history = [executed];
-    await advance(statusRefreshIntervalMs);
     await advanceUntil(() => screen.queryByText('結果: 成功') !== null);
 
     expect(screen.getByText('操作: 起動')).toBeDefined();

@@ -4,5 +4,6 @@ export default [
   index('routes/dashboard.tsx'),
   route('healthz', 'routes/healthz.tsx'),
   route('api/status', 'routes/api.status.tsx'),
+  route('api/history', 'routes/api.history.tsx'),
   route('*', 'routes/not-found.tsx'),
 ] satisfies RouteConfig;
