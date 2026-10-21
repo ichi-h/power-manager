@@ -12,6 +12,8 @@ describe("実行時設定", () => {
     expect(runtime.configPath).toBe("/etc/power-manager/config.json");
     expect(runtime.publicOrigin).toBe("https://power.example.ts.net");
     expect(runtime.authUsername).toBe("admin");
+    // ハッシュは検証にだけ使い、返すときも加工しない（トリムや再エンコードをしない）。
+    expect(runtime.authPasswordHash).toBe(validEnvironment().POWER_MANAGER_AUTH_PASSWORD_HASH);
     expect(runtime.sshIdentityFile).toBe("/run/secrets/power-manager/id_ed25519");
     expect(runtime.sshKnownHostsFile).toBe("/etc/power-manager/known_hosts");
     // NODE_ENV は本番既定値を持つ。環境変数ファイルでの上書きは任意。
@@ -21,6 +23,17 @@ describe("実行時設定", () => {
   test("検証失敗は ConfigurationError になる", () => {
     expect(() => loadRuntimeConfig({})).toThrow(ConfigurationError);
   });
+
+  test.each(["POWER_MANAGER_PUBLIC_ORIGIN", "POWER_MANAGER_AUTH_USERNAME", "NODE_ENV"])(
+    "%s だけが不正でも ConfigurationError になる",
+    (name) => {
+      // クロスフィールド検証（superRefine）が、他のフィールドの失敗で `undefined` に
+      // なった値を読むと TypeError に変わる。起動時の分類が崩れないことを固定する。
+      expect(() => loadRuntimeConfig({ ...validEnvironment(), [name]: "" })).toThrow(
+        ConfigurationError,
+      );
+    },
+  );
 
   test.each([
     "POWER_MANAGER_CONFIG_PATH",
@@ -34,7 +47,11 @@ describe("実行時設定", () => {
     const environment = validEnvironment();
     delete environment[name];
 
-    expect(() => loadRuntimeConfig(environment)).toThrow(new RegExp(name));
+    // 変数名だけでなく「未設定」という理由まで固定する。理由が別の検証に
+    // 移ると、欠落の検出が効かなくなったことに気づけない。
+    expect(() => loadRuntimeConfig(environment)).toThrow(
+      new RegExp(`${name}: 設定されていません`),
+    );
   });
 
   test.each([
@@ -44,7 +61,7 @@ describe("実行時設定", () => {
     "POWER_MANAGER_SSH_KNOWN_HOSTS_FILE",
   ])("空文字の %s を拒否する", (name) => {
     expect(() => loadRuntimeConfig({ ...validEnvironment(), [name]: "" })).toThrow(
-      new RegExp(name),
+      new RegExp(`${name}: 空です`),
     );
   });
 
@@ -139,6 +156,38 @@ describe("公開 Origin", () => {
     expect(() =>
       loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_PUBLIC_ORIGIN: "http://localhost" }),
     ).toThrow(/POWER_MANAGER_PUBLIC_ORIGIN/);
+  });
+
+  test.each([
+    // URL の正規化に委ねることを意図したケース。ここを変えると Origin の完全一致が
+    // 崩れるため、期待値を固定しておく。
+    ["HTTPS://power.example.ts.net", "https://power.example.ts.net"],
+    // 国際化ドメインは punycode に正規化される（ブラウザが送る Origin と同じ形）。
+    ["https://電源.example.ts.net", "https://xn--b9w357f.example.ts.net"],
+  ])("URL の正規化に従って %s を %s として受け付ける", (value, expected) => {
+    expect(
+      loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_PUBLIC_ORIGIN: value }).publicOrigin,
+    ).toBe(expected);
+  });
+
+  test.each(["", "https://power.example.ts.net ", "   "])(
+    // 個別の検証に落ちた値をクロスフィールド検証が参照すると TypeError になる。
+    // ConfigurationError 以外は `startRuntime` が再送出するため、ここで固定する。
+    "PUBLIC_ORIGIN が %j のときも ConfigurationError になる",
+    (value) => {
+      expect(() =>
+        loadRuntimeConfig({ ...validEnvironment(), POWER_MANAGER_PUBLIC_ORIGIN: value }),
+      ).toThrow(ConfigurationError);
+    },
+  );
+
+  test("末尾の空白は URL が落とす前に拒否する", () => {
+    expect(() =>
+      loadRuntimeConfig({
+        ...validEnvironment(),
+        POWER_MANAGER_PUBLIC_ORIGIN: "https://power.example.ts.net ",
+      }),
+    ).toThrow(/POWER_MANAGER_PUBLIC_ORIGIN: 前後に空白を含めないでください/);
   });
 
   test("スキームを含まない host を併せて導出する", () => {
@@ -304,7 +353,7 @@ describe("絶対パス", () => {
     "POWER_MANAGER_SSH_KNOWN_HOSTS_FILE",
   ])("相対パスの %s を拒否する", (name) => {
     expect(() => loadRuntimeConfig({ ...validEnvironment(), [name]: "relative/path" })).toThrow(
-      new RegExp(name),
+      new RegExp(`${name}: 絶対パスを正規化した形で指定してください`),
     );
   });
 

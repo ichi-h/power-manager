@@ -408,9 +408,16 @@ const environmentSchema = z
    * 動き、配備ミスを起動時に検出できない（NFR-06, `docs/security.md` 3.2）。
    */
   .superRefine((data, ctx) => {
+    // `superRefine` は個々のフィールドの検証に失敗しても呼ばれる。このとき
+    // `POWER_MANAGER_PUBLIC_ORIGIN` には変換前の生の値（文字列）が入るため、
+    // 無条件に `.origin` を読むと TypeError になり、ConfigurationError ではなく
+    // 素の例外として `startRuntime` を素通りしてしまう。変換結果だけを受け取る。
+    const publicOrigin = data.POWER_MANAGER_PUBLIC_ORIGIN;
     if (
+      typeof publicOrigin === "object" &&
+      publicOrigin !== null &&
       data.NODE_ENV === "production" &&
-      data.POWER_MANAGER_PUBLIC_ORIGIN.origin.startsWith("http:")
+      publicOrigin.origin.startsWith("http:")
     ) {
       ctx.addIssue({
         code: "custom",
