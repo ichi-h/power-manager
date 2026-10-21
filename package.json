@@ -11,6 +11,8 @@
     "build": "react-router build && node scripts/bundle-server.mjs",
     "start": "node ./server/index.js",
     "typecheck": "react-router typegen && tsc --noEmit",
+    "lint": "biome lint --write --unsafe",
+    "format": "biome format --write",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
     "check": "npm run typecheck && npm run test",

@@ -33,6 +33,7 @@
             packages = with pkgs; [
               nodejs_24
               openssh
+              biome
             ];
           };
         }
