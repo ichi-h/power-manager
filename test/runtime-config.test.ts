@@ -87,6 +87,20 @@ describe("設定 JSON のスキーマ", () => {
     expect(issuesOf({ ...validConfig(), extra: true })).toContain("未知の項目です");
   });
 
+  test("オブジェクト位置の型違いを「未知の項目です」と言わない", () => {
+    // 未知キーと型違いでは直し方が違う。同じ文言にすると原因を推測できない（FR-09）。
+    const input = validConfig();
+    (input.servers as Record<string, unknown>[])[0]!.wol = null;
+
+    const issues = issuesOf(input);
+    expect(issues).toContain("servers.0.wol: オブジェクトで指定してください");
+    expect(issues).not.toContain("未知の項目です");
+  });
+
+  test("ルートがオブジェクトでなければ型違いとして拒否する", () => {
+    expect(issuesOf([])).toContain("オブジェクトで指定してください");
+  });
+
   test("入れ子の未知項目も拒否する", () => {
     const input = validConfig();
     (input.servers as Record<string, unknown>[])[0]!.mac = "00:11:22:33:44:55";
@@ -100,6 +114,14 @@ describe("設定 JSON のスキーマ", () => {
     expect(() => parseManagedConfig({ ...validConfig(), version: undefined })).toThrow(
       ManagedConfigError,
     );
+  });
+
+  test("version の欠落は「必須」、不一致は指定値を案内する", () => {
+    // 欠落と不一致では直し方が違う（書く / 書き換える）。
+    const missing = validConfig();
+    delete missing.version;
+    expect(issuesOf(missing)).toContain("version: 必須です");
+    expect(issuesOf({ ...validConfig(), version: 1 })).toContain("version: 2 を指定してください");
   });
 
   test("型不一致を項目名付きで拒否する", () => {

@@ -44,6 +44,18 @@ function typeMessage(expected: string) {
     issue.input === undefined ? messages.required : expected;
 }
 
+/**
+ * オブジェクト位置の検証メッセージ。
+ *
+ * `strictObject` の `error` は未知キーとオブジェクト以外の入力の両方に使われるため、
+ * 指摘の種別で出し分ける。型違いに「未知の項目です」と出すと、利用者は直す場所を誤る
+ * （FR-09）。
+ */
+function objectMessage(issue: { code?: string; input?: unknown }): string {
+  if (issue.code === "unrecognized_keys") return messages.unknownKey;
+  return issue.input === undefined ? messages.required : messages.objectType;
+}
+
 /** 空文字と前後の空白を拒否する文字列。 */
 const stringValue = z
   .string({ error: typeMessage(messages.stringType) })
@@ -98,7 +110,7 @@ const wolSchema = z
       broadcastAddress: ipv4Value.default("255.255.255.255"),
       port: portValue.default(9),
     },
-    { error: messages.unknownKey },
+    { error: objectMessage },
   )
   .prefault({});
 
@@ -110,7 +122,7 @@ const sshSchema = z.strictObject(
     user: stringValue,
     shutdownCommand: stringValue,
   },
-  { error: messages.unknownKey },
+  { error: objectMessage },
 );
 
 /** サーバー 1 台（`docs/operations.md` 2.1）。 */
@@ -123,7 +135,7 @@ const serverSchema = z.strictObject(
     wol: wolSchema,
     ssh: sshSchema,
   },
-  { error: messages.unknownKey },
+  { error: objectMessage },
 );
 
 /** グループ 1 つ（`docs/operations.md` 2.2）。メンバーはサーバー側が持つ。 */
@@ -132,7 +144,7 @@ const groupSchema = z.strictObject(
     id: stringValue,
     name: stringValue,
   },
-  { error: messages.unknownKey },
+  { error: objectMessage },
 );
 
 /**
@@ -142,8 +154,8 @@ const groupSchema = z.strictObject(
 const targetSchema = z.discriminatedUnion(
   "type",
   [
-    z.strictObject({ type: z.literal("server"), id: stringValue }, { error: messages.unknownKey }),
-    z.strictObject({ type: z.literal("group"), id: stringValue }, { error: messages.unknownKey }),
+    z.strictObject({ type: z.literal("server"), id: stringValue }, { error: objectMessage }),
+    z.strictObject({ type: z.literal("group"), id: stringValue }, { error: objectMessage }),
   ],
   {
     error: (issue) =>
@@ -159,7 +171,7 @@ const repeatSchema = z.discriminatedUnion(
   [
     z.strictObject(
       { kind: z.literal("daily"), time: timeValue },
-      { error: messages.unknownKey },
+      { error: objectMessage },
     ),
     z.strictObject(
       {
@@ -167,7 +179,7 @@ const repeatSchema = z.discriminatedUnion(
         days: z.array(weekdayValue, { error: typeMessage(messages.arrayType) }),
         time: timeValue,
       },
-      { error: messages.unknownKey },
+      { error: objectMessage },
     ),
   ],
   {
@@ -190,7 +202,7 @@ const scheduleSchema = z.strictObject(
     }),
     repeat: repeatSchema,
   },
-  { error: messages.unknownKey },
+  { error: objectMessage },
 );
 
 /**
@@ -199,12 +211,12 @@ const scheduleSchema = z.strictObject(
  */
 export const managedConfigSchema = z.strictObject(
   {
-    version: z.literal(2, { error: messages.version }),
+    version: z.literal(2, { error: typeMessage(messages.version) }),
     servers: z.array(serverSchema, { error: typeMessage(messages.arrayType) }),
     groups: z.array(groupSchema, { error: typeMessage(messages.arrayType) }),
     schedules: z.array(scheduleSchema, { error: typeMessage(messages.arrayType) }),
   },
-  { error: messages.unknownKey },
+  { error: objectMessage },
 );
 
 /**
