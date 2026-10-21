@@ -162,6 +162,8 @@ export function createLoadContext(runtime: RuntimeConfig) {
 | `app/lib/auth.server.ts`     | Basic 認証の検証、ミドルウェア                                            |
 | `app/lib/csrf.server.ts`     | Origin 検証ミドルウェア                                                    |
 | `app/lib/config.server.ts`   | 環境変数スキーマと検証済み設定の型（`PublicRuntimeConfig` など）           |
+| `app/lib/runtime-config.server.ts` | 管理対象 JSON のスキーマ、既定値の適用、集合内の一意性と相互参照の検証 |
+| `app/lib/config-store.server.ts` | 有効設定の保持、原子的な再読込、load context への公開                   |
 | `app/lib/model.ts`           | ドメイン型（`Server`、`Group`、`Schedule`、状態・操作・結果コード）        |
 | `app/lib/power.server.ts`    | WOL 送信、SSH 停止、TCP 死活確認、排他制御、並列度制御                     |
 | `app/lib/scheduler.server.ts`| 次回実行時刻の計算、発火、busy スキップ、実行結果の記録                   |
@@ -169,7 +171,11 @@ export function createLoadContext(runtime: RuntimeConfig) {
 
 外部依存は `react-router`、`@react-router/node`、`react`、`react-dom`、`zod`、`argon2`（Argon2id 検証）に限定する。UDP/TCP/子プロセスは `node:dgram`、`node:net`、`node:child_process` を使う。
 
-`app/lib/config.server.ts` は現時点で環境変数のスキーマと検証済み設定の型だけを持つ。設定 JSON のスキーマとストア（原子的再読込）は後続の t003 で `runtime-config.server.ts` / `config-store.server.ts` に分ける。同じく t003 では、起動時の準備物をまとめて渡す形（`createAppListener(runtime, configStore)`）にし、`server/index.ts` の責務を待受と終了コードに限定したまま設定 JSON を組み込む。`invalid_configuration` を環境変数と設定 JSON で共用している点も、そこではコードを分けるか検討する。
+設定の検証は 2 層に分ける。`app/lib/config.server.ts` が環境変数のスキーマと検証済み設定の型を持ち、`app/lib/runtime-config.server.ts` が管理対象 JSON のスキーマ（`version: 2`、未知項目の拒否、既定値の適用）と、集合内の一意性・相互参照の検証を持つ。`app/lib/model.ts` のドメイン型は、この検証を通過した値だけが満たす形で定義する。
+
+`app/lib/config-store.server.ts` が有効設定の保持と再読込を担う。再読込は「読込み → 全体検証 → 成功時のみ参照の差し替え」の順で行い、失敗したときは旧設定を維持したまま理由と指摘を値として返す（FR-08、NFR-13）。例外にしないのは、再読込の失敗がエラーバウンダリではなく画面の結果表示に載る対象だからである（FR-07）。
+
+起動時の準備物は `server/startup.ts` の `startRuntime()` が `{ runtime, configStore }` としてまとめて返し、`server/app.ts` の `createAppListener(runtime, configStore)` がそれを受け取る。`server/index.ts` の責務は待受とシグナル処理、終了コードに限定したままである。`invalid_configuration` は環境変数の検証失敗・管理対象 JSON の検証失敗・待受アドレスの使用不可で共用する。いずれも再起動では解消せず、運用者が設定を直すまで同じ結果になるため、区別せず同じ終了コード 78 に集約している。
 
 ビルド時のみ Tailwind CSS（`tailwindcss`、`@tailwindcss/vite`）を devDependency として使う。ビルド時に CSS を生成するだけで、実行時のサーバー依存は増えない。スタイルは各コンポーネントのユーティリティクラスに直接記述し、共通の配色・フォントだけを `app/app.css` の `@theme` で定義する。明暗の切り替えは `color-scheme` と CSS のシステム色（`Canvas` / `CanvasText`）に委ねる。
 
@@ -290,7 +296,7 @@ ssh -i <identityFile>
 
 | コード                  | 発生条件                                  | HTTP/表示上の扱い                             |
 | ----------------------- | ----------------------------------------- | --------------------------------------------- |
-| `invalid_configuration` | 環境変数の検証失敗、待受アドレスの使用不可 | 起動中止（終了コード 78）／再読込は旧設定維持 |
+| `invalid_configuration` | 環境変数の検証失敗、管理対象 JSON の検証失敗、待受アドレスの使用不可 | 起動中止（終了コード 78）／再読込は旧設定維持 |
 | `ssh_unavailable`       | `ssh` 実行ファイルが見つからない          | 操作失敗                                      |
 | `operation_failed`      | タイムアウト、コマンド異常終了            | 操作失敗                                      |
 | `busy`                  | 同一対象の電源操作が実行中                | 拒否（実行中）／予約はスキップ                |

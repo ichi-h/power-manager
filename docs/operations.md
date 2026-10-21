@@ -187,7 +187,7 @@ npm run start          # node ./server/index.js（バンドル済みエントリ
 
 - 開発時も Node.js 24 を使う。`bun` は使わない。
 - `npm run dev` では Vite がサーバーモジュールを再インポートする。スケジューラは `NODE_ENV !== "production"` では起動しない（[アーキテクチャ設計](architecture.md) 3.3）。
-- 開発用の設定例は `dev/config.json` を用意し、環境変数で `POWER_MANAGER_CONFIG_PATH` を指す。
+- 開発用の設定例として `dev/config.json` を同梱する。`POWER_MANAGER_CONFIG_PATH=$PWD/dev/config.json` のように絶対パスで指す。起動時に検証を通るため、既定値の適用例と daily / weekly の予約の両方を確認できる。`npm run smoke` も既定でこのファイルを読む（`SMOKE_MANAGED_CONFIG` で差し替え可能）。
 - `POWER_MANAGER_PUBLIC_ORIGIN=http://localhost:5173` のように `localhost` の HTTP Origin を開発時のみ許可する。
 
 ## 4. Nix パッケージ
