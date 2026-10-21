@@ -698,9 +698,17 @@ export function createPowerOperator(
                 server.wol.port,
               )
             : await shutdown(serverId, target, operation, server, runtime);
+      } catch {
+        // 実行単位が reject しても、一括全体を reject させない。1 台の例外を全体の
+        // 失敗に読み替えると、成功した対象の結果と要約が失われる（FR-11、
+        // `operateAll` の doc）。記録の握り込みと同じく `operation_failed` に畳む。
+        outcome = { result: 'failed', code: 'operation_failed' };
       } finally {
         release();
       }
+    } catch {
+      // 待機からの起床（`acquire`）自体が失敗した場合も同じ扱いにする。
+      outcome = { result: 'failed', code: 'operation_failed' };
     } finally {
       // 成功・失敗を問わず、実行後は必ずフラグを下ろす（FR-06）。
       busy.delete(serverId);
@@ -722,6 +730,8 @@ export function createPowerOperator(
     async operateAll(scope, operation, targets, runtime) {
       // 一括は busy の対象を除外し、残りを並列度 8 で実行する（FR-11）。
       // 対象は確定済み（ID 重複なし）のため、そのまま 1 台 1 回ずつ実行する。
+      // `operateOne` は reject を結果に畳んで返すため、`Promise.all` が reject することは
+      // 無く、1 台の失敗や例外で成功分の結果と要約を失わない。
       const records = await Promise.all(
         targets.map(async (target) =>
           operateOne(

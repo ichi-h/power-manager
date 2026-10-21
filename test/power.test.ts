@@ -327,6 +327,45 @@ describe('一括操作の対象集合と要約（FR-11）', () => {
     expect(outcome.summary).toEqual({ ok: 1, failed: 1, skipped: 0 });
   });
 
+  test('実行単位が reject しても部分結果と要約を返す（FR-11）', async () => {
+    // `runShutdown` の reject で一括全体が reject すると、成功した対象の結果と要約が
+    // 失われ、どのサーバーが停止したかを利用者が追えなくなる。
+    const operator = createPowerOperator({
+      runShutdown: (async (serverId: string) => {
+        if (serverId === 'broken') throw new Error('spawn failed');
+        return { result: 'succeeded' as const, code: null };
+      }) as OperateServer,
+    });
+
+    const outcome = await operator.operateAll(
+      { type: 'all' },
+      'shutdown',
+      [
+        { ...server, id: 'ok-1' },
+        { ...server, id: 'broken' },
+        { ...server, id: 'ok-2' },
+      ],
+      runtime,
+    );
+
+    expect(outcome.records).toHaveLength(3);
+    expect(
+      outcome.records.map((record) => ({
+        id: record.target.id,
+        result: record.result,
+        code: record.code,
+      })),
+    ).toEqual([
+      { id: 'ok-1', result: 'succeeded', code: null },
+      { id: 'broken', result: 'failed', code: 'operation_failed' },
+      { id: 'ok-2', result: 'succeeded', code: null },
+    ]);
+    // 成功した 2 台の結果は失われない。
+    expect(outcome.summary).toEqual({ ok: 2, failed: 1, skipped: 0 });
+    // 例外を投げた対象の実行中フラグも下りる（次の操作を拒否し続けない）。
+    expect(operator.busyTargets().has('broken')).toBe(false);
+  });
+
   test('一括の同時実行数は 8 を超えない（NFR-07）', async () => {
     let running = 0;
     let peak = 0;
