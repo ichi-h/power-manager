@@ -23,16 +23,24 @@ import {
   type ConfigStore,
 } from "../app/lib/config-store.server.ts";
 import {
+  createOperationHistory,
+  historyContext,
+  type OperationHistory,
+} from "../app/lib/history.server.ts";
+import {
   createStatusChecker,
   type StatusChecker,
 } from "../app/lib/power.server.ts";
 import { statusCheckerContext } from "../app/routes/api.status.tsx";
 import { logRequestFailure } from "./log.ts";
 
-export type { ConfigStore, RuntimeConfig, StatusChecker };
+export type { ConfigStore, OperationHistory, RuntimeConfig, StatusChecker };
 
 /** プロセス共有の死活確認器。1 つのプロセスで 1 つだけ作る（NFR-08）。 */
 const sharedStatusChecker = createStatusChecker();
+
+/** プロセス共有の実行結果リングバッファ（FR-13）。メモリ上のみで、再起動で空になることを許容する（NFR-02）。 */
+const sharedHistory = createOperationHistory();
 
 /**
  * loader/action へ渡す load context を組み立てる。
@@ -50,6 +58,8 @@ export function createLoadContext(
   context.set(configStoreContext, configStore);
   // 死活確認器は server-only の実体をここから載せる。ルート側は型だけに依存させる。
   context.set(statusCheckerContext, sharedStatusChecker);
+  // リングバッファも同じく server-only の実体をここから載せる（FR-13）。
+  context.set(historyContext, sharedHistory);
   return context;
 }
 

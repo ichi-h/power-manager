@@ -14,6 +14,8 @@
  * （ awaits を挟まないため、イベントループ上で分割されない）。配列を都度作るため、
  * `recent()` の呼び出し側が参照を共有して破棄済みの要素を見ることはない。
  */
+import { createContext, type RouterContext } from "react-router";
+
 import type { PowerOperationRecord } from "./power.server.ts";
 
 /** 保持件数の既定値（FR-13）。環境変数などで変える設定項目は持たない。 */
@@ -56,4 +58,39 @@ export function createOperationHistory(
       return [...records].reverse();
     },
   };
+}
+
+/**
+ * リングバッファの load context キー。
+ *
+ * `configStoreContext`（`app/lib/config-store.server.ts`）と同じ理由で `globalThis` の
+ * スロットを唯一の情報源にする。サーバーエントリと `build/server/index.js` は別の
+ * モジュールグラフになるため、モジュールスコープでキーを作ると実体が 2 つになり、
+ * loader 側の `context.get` が失敗する。
+ */
+const historyContextSlot = "__powerManagerHistoryContext";
+
+type HistoryContextRegistry = {
+  [historyContextSlot]?: RouterContext<OperationHistory>;
+};
+
+const historyContextRegistry = globalThis as unknown as HistoryContextRegistry;
+
+/** loader/action からリングバッファを参照するためのキー。`server/app.ts` が実体を設定する。 */
+export const historyContext: RouterContext<OperationHistory> = (
+  historyContextRegistry[historyContextSlot] ??= createContext<OperationHistory>()
+);
+
+/** `RouterContextProvider` のうち `requireHistory` が使う部分。テストで差し替えられるようにする。 */
+type RouterContextProviderLike = { get: <T>(key: RouterContext<T>) => T };
+
+/** load context からリングバッファを読む。未設定なら配線不整合だと分かるエラーにする。 */
+export function requireHistory(context: RouterContextProviderLike): OperationHistory {
+  try {
+    return context.get(historyContext);
+  } catch {
+    throw new Error(
+      "リングバッファが load context にありません（server/app.ts の createLoadContext を経由していません）",
+    );
+  }
 }
