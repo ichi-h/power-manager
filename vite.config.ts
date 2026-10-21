@@ -12,6 +12,13 @@ export default defineConfig({
     environment: "node",
     include: ["test/**/*.test.{ts,tsx}"],
     /**
+     * jsdom 環境で画面モジュールを読み込むための前処理。
+     *
+     * `react-router` の Vite プラグインが開発時用の React Refresh 前文を差し込むため、
+     * これを設置しないと jsdom 上での画面モジュール読み込みが失敗する。
+     */
+    setupFiles: ["test/support/jsdom-setup.ts"],
+    /**
      * カバレッジは `npm run coverage`（CI も同じ）で計測する。
      *
      * 閾値は網羅率そのものを目的にせず、低下の検出だけを狙って現状より少し下に置く。

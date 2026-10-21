@@ -16,10 +16,8 @@ import {
   createTcpCheck,
   type StatusChecker,
 } from "../app/lib/power.server.ts";
-import {
-  loader as statusLoader,
-  statusCheckerContext,
-} from "../app/routes/api.status.tsx";
+import { loader as statusLoader } from "../app/routes/api.status.tsx";
+import { statusCheckerContext } from "../app/lib/status-checker-context.ts";
 import {
   configStoreContext,
   createConfigStore,

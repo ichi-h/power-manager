@@ -1,3 +1,10 @@
+/**
+ * 画面の骨格の検証。
+ *
+ * root は `react-router` の Vite プラグインが注入する前文（preamble）に依存するため、
+ * jsdom へそのまま描画できない。そのため root を伴う描画はサーバー描画
+ * （`renderToString`）で確認する。操作を伴う検証は `test/dashboard-screen.test.tsx`。
+ */
 import {
   createRoutesStub,
   createStaticHandler,
@@ -8,17 +15,44 @@ import { renderToString } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 
 import Root, { ErrorBoundary } from "../app/root.tsx";
-import Home from "../app/routes/home.tsx";
+import Dashboard, { type DashboardLoaderData } from "../app/routes/dashboard.tsx";
 import NotFound from "../app/routes/not-found.tsx";
 
+const loaderData: DashboardLoaderData = {
+  servers: [{ id: "nas", name: "NAS", groups: ["storage"] }],
+  groups: [{ id: "storage", name: "ストレージ" }],
+  states: { nas: "online" },
+  recent: [],
+};
+
 describe("画面", () => {
-  test("root がアプリケーションのレイアウトを描画する", () => {
-    const Stub = createRoutesStub([
-      { path: "/", Component: Root, children: [{ index: true, Component: Home }] },
+  test("root がアプリケーションのレイアウトを描画する", async () => {
+    const handler = createStaticHandler([
+      {
+        path: "/",
+        Component: Root,
+        // 描画だけを確かめるため、route が渡す props は `as never` で満たす。
+        children: [
+          {
+            index: true,
+            // 描画だけを確かめるため、route が渡す props は使わず固定値で呼ぶ。
+            Component: () => Dashboard({ loaderData } as never),
+            loader: () => loaderData,
+          },
+        ],
+      },
     ]);
-    const html = renderToString(<Stub initialEntries={["/"]} />);
+    const context = await handler.query(new Request("http://localhost/"));
+    const html = renderToString(
+      <StaticRouterProvider
+        router={createStaticRouter(handler.dataRoutes, context as never)}
+        context={context as never}
+      />,
+    );
     expect(html).toContain("power-manager");
-    expect(html).toContain("画面を準備中です。");
+    expect(html).toContain("サーバー一覧");
+    // 一覧の行がサーバー側で描画される（スクリプト無効時も一覧が読める, NFR-09）。
+    expect(html).toContain("状態: <!-- -->オンライン");
   });
 
   test("未知のパスは見つからない旨を表示する", () => {
@@ -40,7 +74,7 @@ describe("エラーバウンダリ", () => {
         children: [
           {
             index: true,
-            Component: Home,
+            Component: () => null,
             loader: () => {
               throw new Error("内部の詳細情報");
             },

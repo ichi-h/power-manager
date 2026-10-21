@@ -214,9 +214,10 @@ async function waitForStarted() {
       if (!body.includes("power-manager")) {
         throw new Error("GET / の HTML にアプリケーションの内容が含まれていません");
       }
-      // エラー画面ではなくルートの出力が返っていること。`/` の loader は実行時設定を
+      // エラー画面ではなく一覧画面の出力が返っていること。`/` の loader は実行時設定を
       // `context.get` で読むため、キーが別実体になっていればここで 500 になる（r1a2 の再発防止）。
-      if (!body.includes("画面を準備中です。")) {
+      // サーバー 0 台の設定でも見出しは出るため、見出しで判定する。
+      if (!body.includes("サーバー一覧")) {
         throw new Error("GET / がルートの出力ではなくエラー画面を返しました");
       }
       if (body.includes("処理を完了できませんでした")) {

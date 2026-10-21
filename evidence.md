@@ -13,7 +13,7 @@
   第 1 段である React Router 内蔵 `allowedActionOrigins` が 400 を返すため、
   400/403 のどちらでも成立とする）
 - `/healthz` → **200**（`ok`、SEC-10 の認証免除）
-- 正当な資格情報の GET / → **200**、HTML に `power-manager` と `画面を準備中です。`
+- 正当な資格情報の GET / → **200**、HTML に `power-manager` と `サーバー一覧`
   を含み、エラー画面でない（root ミドルウェア結線・load context の確認）
 - 起動 6 秒後も生存（誤った shutdown タイマーなし）
 - SIGTERM → exit 0 で正常終了
