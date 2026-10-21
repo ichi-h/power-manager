@@ -17,7 +17,10 @@ import { useFetcher, type RouterContext } from 'react-router';
 
 import type { Route } from './+types/dashboard';
 import { requireConfigStore } from '../lib/config-store.server.ts';
-import type { HistoryResponse } from '../lib/history-context.ts';
+import type {
+  HistoryRecord,
+  HistoryResponse,
+} from '../lib/history-context.ts';
 import { requireHistory } from '../lib/history.server.ts';
 import type {
   ManagedConfig,
@@ -61,7 +64,7 @@ export type DashboardLoaderData = {
     readonly name: string;
   }>;
   readonly states: Readonly<Record<string, ServerState>>;
-  readonly recent: ReadonlyArray<PowerOperationRecord>;
+  readonly recent: ReadonlyArray<HistoryRecord>;
 };
 
 /**
@@ -331,9 +334,9 @@ export function useStatusAutoRefresh(
  * 4xx/5xx・ネットワーク失敗では直前の履歴を維持する。
  */
 export function useHistoryAutoRefresh(
-  initialRecords: ReadonlyArray<PowerOperationRecord>,
+  initialRecords: ReadonlyArray<HistoryRecord>,
   fetcher: PollingFetcher<unknown>,
-): ReadonlyArray<PowerOperationRecord> {
+): ReadonlyArray<HistoryRecord> {
   const [records, setRecords] = useState(initialRecords);
   const lastData = useRef<unknown>(undefined);
 
@@ -456,7 +459,7 @@ export function parseStatusResponse(
  */
 export function parseHistoryResponse(
   value: unknown,
-): ReadonlyArray<PowerOperationRecord> | null {
+): ReadonlyArray<HistoryRecord> | null {
   if (typeof value !== 'object' || value === null) return null;
   const records = (value as Partial<HistoryResponse>).records;
   if (!Array.isArray(records)) return null;
@@ -465,10 +468,11 @@ export function parseHistoryResponse(
 }
 
 /** 画面が扱える実行結果の形かどうか。 */
-function isOperationRecord(value: unknown): value is PowerOperationRecord {
+function isOperationRecord(value: unknown): value is HistoryRecord {
   if (typeof value !== 'object' || value === null) return false;
-  const record = value as Partial<PowerOperationRecord>;
+  const record = value as Partial<HistoryRecord>;
   if (typeof record.at !== 'string') return false;
+  if (typeof record.seq !== 'number') return false;
   if (record.operation !== 'wake' && record.operation !== 'shutdown') {
     return false;
   }
@@ -608,7 +612,7 @@ function ServerRow({
 }
 
 /** 「最近の実行」の 1 行（FR-13）。表示は実行時刻・予約 ID・対象・操作・結果・理由に限る。 */
-function RecentRow({ record }: { record: PowerOperationRecord }) {
+function RecentRow({ record }: { record: HistoryRecord }) {
   const reason = toReasonLabel(record);
 
   return (
@@ -661,10 +665,8 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
       ) : (
         <ul>
           {recent.map((record) => (
-            <RecentRow
-              key={`${record.at}:${record.target.type}:${record.target.id}`}
-              record={record}
-            />
+            // 同一対象を同一ミリ秒に複数操作しても衝突しない連番で識別する。
+            <RecentRow key={record.seq} record={record} />
           ))}
         </ul>
       )}

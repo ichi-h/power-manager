@@ -14,6 +14,7 @@ import {
   historyContext,
   requireHistory,
 } from '../app/lib/history.server.ts';
+import type { HistoryRecord } from '../app/lib/history-context.ts';
 import type { PowerOperationRecord } from '../app/lib/power.server.ts';
 import { loader as historyLoader } from '../app/routes/api.history.tsx';
 
@@ -40,8 +41,8 @@ describe('createOperationHistory', () => {
     const recent = history.recent();
     expect(recent).toHaveLength(100);
     // 最古（0〜49）は破棄され、最新が先頭に来る。
-    expect(recent[0]).toEqual(record('server-149'));
-    expect(recent[99]).toEqual(record('server-50'));
+    expect(recent[0]).toMatchObject(record('server-149'));
+    expect(recent[99]).toMatchObject(record('server-50'));
   });
 
   test('上限超過時は最古から破棄する', () => {
@@ -86,11 +87,23 @@ describe('createOperationHistory', () => {
     history.push(record('a'));
     history.push(record('b'));
 
-    const recent = history.recent() as Array<PowerOperationRecord>;
+    const recent = history.recent() as Array<HistoryRecord>;
     recent.pop();
-    recent.push(record('injected'));
+    recent.push({ ...record('injected'), seq: 999 });
 
     expect(history.recent().map((r) => r.target.id)).toEqual(['b', 'a']);
+  });
+
+  test('保持順に単調増加の連番を振り、破棄後も再利用しない', () => {
+    const history = createOperationHistory(2);
+    history.push(record('a'));
+    history.push(record('b'));
+    history.push(record('c'));
+
+    // 'a' は破棄済み。残る 2 件と次に足した 1 件の連番が重複しないことを見る。
+    expect(history.recent().map((r) => r.seq)).toEqual([3, 2]);
+    history.push(record('d'));
+    expect(history.recent().map((r) => r.seq)).toEqual([4, 3]);
   });
 
   test('capacity が 0 のときは何も保持しない', () => {
@@ -108,8 +121,8 @@ describe('createOperationHistory', () => {
     const recent = history.recent();
     expect(recent).toHaveLength(historyCapacity);
     // 最古（server-0）が残っており、最新が先頭に来る。
-    expect(recent[0]).toEqual(record(`server-${historyCapacity - 1}`));
-    expect(recent[historyCapacity - 1]).toEqual(record('server-0'));
+    expect(recent[0]).toMatchObject(record(`server-${historyCapacity - 1}`));
+    expect(recent[historyCapacity - 1]).toMatchObject(record('server-0'));
   });
 
   test('capacity が負のときは何も保持しない', () => {
@@ -127,9 +140,7 @@ describe('createOperationHistory', () => {
     expect(Object.isFrozen(history.recent()[0])).toBe(true);
 
     // 渡した側のオブジェクトを後から書き換えても、保持へは波及しない。
-    expect(() => {
-      (pushed as { at: string }).at = '2027-01-01T00:00:00.000Z';
-    }).toThrow();
+    (pushed as { at: string }).at = '2027-01-01T00:00:00.000Z';
     expect(history.recent()[0]?.at).toBe('2026-01-02T03:04:05.678Z');
   });
 });
@@ -191,7 +202,10 @@ describe('/api/history loader', () => {
     );
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(JSON.parse(await response.text())).toEqual({
-      records: [record('b'), record('a')],
+      records: [
+        { ...record('b'), seq: 2 },
+        { ...record('a'), seq: 1 },
+      ],
     });
   });
 

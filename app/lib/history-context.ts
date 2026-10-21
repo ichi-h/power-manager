@@ -9,7 +9,16 @@
  */
 import type { PowerOperationRecord } from './power.server.ts';
 
+/**
+ * 「最近の実行」の 1 行分のデータ。
+ *
+ * `seq` はリングバッファが保持順に振る単調増加の連番である。画面で行を一意に識別する
+ * （`key`）ために使い、表示項目としては出さない（FR-13）。同一対象を同一ミリ秒に
+ * 複数操作しても衝突しない。
+ */
+export type HistoryRecord = PowerOperationRecord & { readonly seq: number };
+
 /** `/api/history` が返す本文。新しい順に並ぶ直近の実行結果だけを持つ。 */
 export type HistoryResponse = {
-  readonly records: ReadonlyArray<PowerOperationRecord>;
+  readonly records: ReadonlyArray<HistoryRecord>;
 };

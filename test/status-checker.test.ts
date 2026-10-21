@@ -217,7 +217,7 @@ describe('/api/status loader', () => {
     const config = {
       ...base,
       servers: [
-        { ...base.servers[0]!, ssh: { ...base.servers[0]?.ssh, port: 1 } },
+        { ...base.servers[0]!, ssh: { ...base.servers[0]!.ssh, port: 1 } },
       ],
     };
     const store = createConfigStore('/etc/power-manager/config.json', config);
@@ -247,7 +247,7 @@ describe('/api/status loader', () => {
     const config = {
       ...base,
       servers: [
-        { ...base.servers[0]!, ssh: { ...base.servers[0]?.ssh, port: 1 } },
+        { ...base.servers[0]!, ssh: { ...base.servers[0]!.ssh, port: 1 } },
       ],
     };
     const store = createConfigStore('/etc/power-manager/config.json', config);

@@ -20,6 +20,7 @@ import Dashboard, {
   type DashboardLoaderData,
   type OperationResult,
 } from '../app/routes/dashboard.tsx';
+import type { HistoryRecord } from '../app/lib/history-context.ts';
 import type { PowerOperationRecord } from '../app/lib/power.server.ts';
 
 /** 2 台・1 グループの画面データ。 */
@@ -40,8 +41,9 @@ function loaderData(
 
 function record(
   overrides: Partial<PowerOperationRecord> = {},
-): PowerOperationRecord {
+): HistoryRecord {
   return {
+    seq: 1,
     at: '2026-01-02T03:04:05.000Z',
     target: { type: 'server', id: 'nas' },
     operation: 'shutdown',
@@ -63,7 +65,7 @@ function renderDashboard(
     onHistoryLoad?: () => void;
     onAction?: (formData: FormData) => void;
     statusStates?: Record<string, string>;
-    history?: () => { records: ReadonlyArray<PowerOperationRecord> } | Response;
+    history?: () => { records: ReadonlyArray<HistoryRecord> } | Response;
   } = {},
 ) {
   const Stub = createRoutesStub([
@@ -452,7 +454,7 @@ describe('再現（b356 で見つかった欠陥）', () => {
       result: 'succeeded',
       code: null,
     });
-    let history: ReadonlyArray<PowerOperationRecord> = [];
+    let history: ReadonlyArray<HistoryRecord> = [];
     renderDashboard(loaderData(), {
       history: () => ({ records: history }),
     });

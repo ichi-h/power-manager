@@ -19,22 +19,26 @@
  */
 import { createContext, type RouterContext } from 'react-router';
 
+import type { HistoryRecord } from './history-context.ts';
 import type { PowerOperationRecord } from './power.server.ts';
+
+export type { HistoryRecord };
 
 /** 保持件数の既定値（FR-13）。環境変数などで変える設定項目は持たない。 */
 export const historyCapacity = 100;
+
 
 /**
  * 実行結果のリングバッファ。
  *
  * `push` は `app/lib/power.server.ts` の `onRecord` から呼ぶ。`recent` は画面の loader
- * （「最近の実行」欄）から呼ぶ。いずれも同期で、失敗しない。
+ * とリソースルート（「最近の実行」欄）から呼ぶ。いずれも同期で、失敗しない。
  */
 export type OperationHistory = {
-  /** 実行結果を 1 件追加する。上限を超えたら最古の 1 件を破棄する。 */
+  /** 実行結果を 1 件追加する。連番を振り、上限を超えたら最古の 1 件を破棄する。 */
   push(record: PowerOperationRecord): void;
   /** 保持している実行結果を新しい順で返す。保持していないときは空配列。 */
-  recent(): readonly PowerOperationRecord[];
+  recent(): readonly HistoryRecord[];
 };
 
 /**
@@ -47,13 +51,16 @@ export type OperationHistory = {
 export function createOperationHistory(
   capacity: number = historyCapacity,
 ): OperationHistory {
-  const records: Array<PowerOperationRecord> = [];
+  const records: Array<HistoryRecord> = [];
+  // 破棄した要素の連番を再利用しないよう、連番はバッファとは独立に進める。
+  let nextSeq = 1;
 
   return {
     push(record: PowerOperationRecord) {
       // 保持する要素は不変とする。呼び出し側が渡したオブジェクトを後から書き換えても、
       // バッファ内の保持へは波及しない。
-      records.push(Object.freeze(record));
+      records.push(Object.freeze({ ...record, seq: nextSeq }));
+      nextSeq += 1;
       // push は必ず 1 件だけ増やすため、超過時の破棄は固定の 1 件で足りる。
       if (records.length > capacity)
         records.splice(0, records.length - capacity);
