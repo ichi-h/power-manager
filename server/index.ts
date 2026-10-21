@@ -15,6 +15,7 @@ import {
   type RuntimeConfig,
 } from "../app/lib/config.server.ts";
 import { createAppListener } from "./app.ts";
+import { logRequestFailure } from "./log.ts";
 import { serveStatic } from "./static.ts";
 
 /**
@@ -60,12 +61,7 @@ const server = createServer(
     serveStatic(request, response).then((handled) => {
       if (!handled) requestListener(request, response);
     }, (error: unknown) => {
-      console.error(
-        JSON.stringify({
-          event: "request_failed",
-          reason: error instanceof Error ? error.message : "unknown",
-        }),
-      );
+      logRequestFailure(error);
       if (!response.headersSent) response.writeHead(500);
       response.end();
     });

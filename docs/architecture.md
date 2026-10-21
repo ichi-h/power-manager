@@ -97,6 +97,7 @@ import { createServer } from "node:http";
 
 const listener = createRequestListener({
   build: () => import("../build/server/index.js"),
+  mode: "production",
   getLoadContext: () => {
     const context = new RouterContextProvider();
     context.set(configContext, loadRuntimeConfig());
@@ -109,6 +110,8 @@ server.listen(port, "127.0.0.1");
 ```
 
 - `getLoadContext` は v8 では `RouterContextProvider` を返す（プレーンオブジェクトを返す例は v6/v7 のもの）。loader/action からは `context.get(configContext)` で参照する。
+- `configContext` は `globalThis` 上の単一スロットに置く。`build/server/index.js`（ルート側）と自前エントリのバンドルは別のモジュールグラフであり、モジュールスコープで `createContext()` すると実体が 2 つになって `context.get` が失敗する。`RouterContextProvider` はキーをオブジェクト同一性で照合するため、この共有が要る。
+- 未捕捉の例外は `build.entry.module.handleError` を差し替えて処理する（7.1 の `request_failed`）。`createRequestListener` は `handleError` を受け付けないため、ビルドを浅くコピーして差し替える。
 - `configContext` は `globalThis` の 1 スロットから取る。`react-router build` の成果物（`build/server/index.js`）と自前エントリのバンドルは別のモジュールグラフになり、モジュールスコープで `createContext()` すると同じ名前でも実体が 2 つになる。`RouterContextProvider` はキーをオブジェクト同一性で照合するため、実体が分かれると「No value found for context」で 500 になる。`app/lib/config.server.ts` の `configContext` が唯一の情報源で、loader/action は `requireRuntimeConfig(context)` 経由で読む（未設定なら配線不整合と分かるメッセージで失敗する）。
 - 仮画面の `/` も loader で `requireRuntimeConfig` を呼ぶ。起動して 1 ページ返すだけで、2 つのモジュールグラフが同じキーを共有していることを確認できる（`npm run smoke` が本番ビルドに対して検証する）。
 - ストリーミングは Web 標準の `ReadableStream` をそのまま流す。
@@ -288,6 +291,9 @@ ssh -i <identityFile>
 | `schedule_run`    | `scheduleId`、`target`、`operation`、`result`、`code`             |
 | `schedule_skip`   | `scheduleId`、`code`（`busy` / `missed_schedule`）                |
 | `config_reload`   | `result`、`reason`（失敗時）、`schedules`（再計算した予約数）     |
+| `request_failed`  | `code`（`csrf_rejected` / `request_rejected` / `internal_error`）、`reason` |
+
+`request_failed` はリクエスト処理中の失敗（action の Origin 不一致、静的配信の失敗、未捕捉の例外）を 1 行で記録する。`reason` は例外メッセージを 1 行に潰して 200 文字で切り詰めたもので、スタックトレースは出さない。React Router の既定のハンドラは `console.error(error)` でスタックを複数行に出すため、`server/app.ts` の `withErrorHandler` が `build.entry.module.handleError` を差し替えている。`createRequestListener` に `mode: "production"` を明示するのも、開発用のエラー表示を残さないためである。
 
 `Authorization`、パスワード、ハッシュ、秘密鍵、停止コマンドの内容、環境変数値は出力しない（SEC-05）。ログの保持期間と保存先はホストのログ収集機構に委ねる。
 

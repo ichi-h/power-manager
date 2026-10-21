@@ -11,6 +11,7 @@ import { createRequestListener } from "@react-router/node";
 import { RouterContextProvider, type ServerBuild } from "react-router";
 
 import { configContext, type RuntimeConfig } from "../app/lib/config.server.ts";
+import { logRequestFailure } from "./log.ts";
 
 export type { RuntimeConfig };
 
@@ -29,13 +30,38 @@ export function createLoadContext(runtime: RuntimeConfig): RouterContextProvider
  */
 const serverBuildPath = "../build/server/index.js";
 
+/**
+ * ServerBuild の `entry.module.handleError` を差し替える。
+ *
+ * React Router の既定のハンドラは `console.error(error)` でスタックトレースを複数行に
+ * わたって出す。標準エラーへ 1 行 1 JSON を出す方針（`docs/architecture.md` 7.1）と、
+ * 内部スタックをログへ出さない方針（`docs/security.md` 4.3）に反するため置き換える。
+ *
+ * `createRequestListener` は `handleError` を受け付けず、`build.entry.module.handleError`
+ * しか見ないため、ビルドを浅くコピーして差し替える。
+ */
+export function withErrorHandler(build: ServerBuild): ServerBuild {
+  return {
+    ...build,
+    entry: {
+      ...build.entry,
+      module: {
+        ...build.entry.module,
+        handleError: logRequestFailure,
+      },
+    },
+  };
+}
+
 async function loadServerBuild(): Promise<ServerBuild> {
-  return (await import(serverBuildPath)) as ServerBuild;
+  return withErrorHandler((await import(serverBuildPath)) as ServerBuild);
 }
 
 export function createAppListener(runtime: RuntimeConfig) {
   return createRequestListener({
     build: loadServerBuild,
+    // 明示しないと `develop` 扱いになり、開発用の挙動が残る（SEC-05）。
+    mode: "production",
     getLoadContext: () => createLoadContext(runtime),
   });
 }

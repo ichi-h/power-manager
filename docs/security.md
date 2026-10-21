@@ -121,6 +121,8 @@ export const middleware: Route.MiddlewareFunction[] = [authMiddleware, csrfMiddl
 
 画面には結果種別と対象 ID のみを出す（FR-07, SEC-05）。内部エラーの詳細は標準エラーへ構造化ログとして出す。React Router の開発用エラースタックは `mode: "production"` で無効化されるため、本番のエラーバウンダリは汎用文言のみを表示する。
 
+`console.error` を直接呼ぶ既定のエラーハンドラは、例外のスタックトレースを複数行で標準エラーへ出す。これは 1 行 1 JSON の方針（`docs/architecture.md` 7.1）と、スタックを出さない方針の両方に反するため、`server/app.ts` が `build.entry.module.handleError` を差し替え、例外メッセージを 1 行に潰した `request_failed` だけを記録する。分類は `csrf_rejected` / `request_rejected` / `internal_error` の 3 種類で、いずれも秘密値を含まない。
+
 ## 5. 停止経路の最小権限
 
 対象サーバー側で、専用公開鍵に対応する秘密鍵による SSH ログインを許可し、次のみをパスワードなしで実行できるよう `sudoers` を設定する。
