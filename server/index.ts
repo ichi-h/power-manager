@@ -6,6 +6,7 @@
  *
  * CLI 引数は受け付けない（NFR-06）。設定は環境変数だけで渡す。
  */
+import { writeSync } from "node:fs";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
@@ -14,19 +15,26 @@ import {
   loadRuntimeConfig,
   type RuntimeConfig,
 } from "../app/lib/config.server.ts";
+import { configurationErrorExitCode } from "../app/lib/exit-codes.ts";
 import { createAppListener } from "./app.ts";
 import { logRequestFailure } from "./log.ts";
 import { serveStatic } from "./static.ts";
 
-/**
- * 設定エラーを表す sysexits.h の EX_CONFIG。NixOS モジュールの
- * `RestartPreventExitStatus` が同じ値を再起動抑止に使う（`nix/module.nix`）。
- */
-const configurationErrorExitCode = 78;
 const forcedExitMilliseconds = 5_000;
 
 /** 待受アドレスの不備として扱う `error.code`。設定変更で解消できるため再起動しても無駄になる。 */
 const listenAddressErrorCodes = new Set(["EADDRINUSE", "EACCES", "EINVAL"]);
+
+/**
+ * 標準エラーへ 1 行を同期的に書く。
+ *
+ * `console.error` は非同期にフラッシュされるため、直後の `process.exit()` で取りこぼす
+ * ことがある（パイプ越しに 65,536 バイトを超える出力で実測）。終了直前の 1 行は
+ * `fs.writeSync` で書き切る。
+ */
+function writeStderrLine(line: string): void {
+  writeSync(2, `${line}\n`);
+}
 
 /**
  * 環境変数を検証し、失敗したら待受を開始せずに終了コード 78 で終了する（NFR-05, NFR-06）。
@@ -40,7 +48,9 @@ function startRuntime(): RuntimeConfig {
   } catch (error) {
     if (!(error instanceof ConfigurationError)) throw error;
 
-    console.error(
+    // `process.exit()` は保留中の書き込みを待たない。パイプ越しに読む呼び出し側
+    // （`scripts/smoke.mjs` など）がこの 1 行を取りこぼさないよう、同期で書き切る。
+    writeStderrLine(
       JSON.stringify({
         event: "startup_failed",
         code: "invalid_configuration",
@@ -86,7 +96,7 @@ server.on("error", (error: NodeJS.ErrnoException) => {
   const isListenAddressError =
     error.code !== undefined && listenAddressErrorCodes.has(error.code);
 
-  console.error(
+  writeStderrLine(
     JSON.stringify({
       event: "startup_failed",
       code: isListenAddressError ? "invalid_configuration" : "operation_failed",

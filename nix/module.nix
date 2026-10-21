@@ -24,6 +24,8 @@ in {
         User = "power-manager";
         Group = "power-manager";
         Restart = "on-failure";
+        # 78 は sysexits.h の EX_CONFIG。アプリ側の定義は app/lib/exit-codes.ts の
+        # `configurationErrorExitCode` で、この値と一致している必要がある。
         RestartPreventExitStatus = [ 78 ];
         UMask = "0077";
         NoNewPrivileges = true;

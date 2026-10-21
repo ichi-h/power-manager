@@ -84,7 +84,7 @@ power-manager（Node.js 24 プロセス、専用 system user）
 
 `ssh` の存在確認は起動時に必須とせず、停止操作の実行時に `ssh_unavailable` として検出する。これは起動要件（NFR-06）を環境変数・設定 JSON の検証に限定し、パッケージマネージャが `PATH` を提供する配置（Nix）と、手動配置の両方を許容するためである。
 
-終了コード `78` は NixOS モジュール側で `RestartPreventExitStatus` に指定し、再起動ループを防ぐ（NFR-05）。
+終了コード `78` は NixOS モジュール側で `RestartPreventExitStatus` に指定し、再起動ループを防ぐ（NFR-05）。値の定義は `app/lib/exit-codes.ts` の `configurationErrorExitCode` に 1 つだけ置き、`server/index.ts` と `scripts/smoke.mjs` が同じ定数を import する（`nix/module.nix` はリテラルで持つため、コメントで対応を示す）。
 
 ### 3.3 サーバーエントリの形
 
