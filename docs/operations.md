@@ -406,6 +406,18 @@ GitHub Releases とリリース資産のアップロードは行わない。GitH
 
 フォーマッタとリンタは依存に加えていない。導入する場合は `package.json` のスクリプトと CI の両方を更新する。
 
+### 6.1 NixOS モジュールのチェック
+
+`nix flake check` は `nixosModules` の option 定義を評価するだけで、NixOS 構成に組み込んだときに起きる衝突（`environment.PATH` の二重定義など）は検出しない。そのため `checks.<system>.nixos-module` で実際に構成を評価し、次を検証する。
+
+- `enable = true` で `power-manager.service` が生成され、5.2 の各行（hardening・`RestartPreventExitStatus = [ 78 ]`・`Environment=POWER_MANAGER_CONFIG_PATH=...` など）が含まれること。
+- `enable = false` では unit を生成しないこと。
+- `configFile` 未指定時に `POWER_MANAGER_CONFIG_PATH` を設定しないこと。
+- `PATH` に OpenSSH が含まれること。
+- `configFile` が `/home` 配下なら `assertions` で拒否し、`/etc` 配下なら通ること。
+
+このチェックはパッケージのビルドに依存しない（unit の `ExecStart` はパス文字列として評価されるだけ）。手元では `nix build .#checks.<system>.nixos-module` で実行できる。
+
 ## 7. テスト方針
 
 自動テストで少なくとも次を検証する（NFR-11）。ランナーは Vitest、ルートのテストは `createRoutesStub` を使う。
