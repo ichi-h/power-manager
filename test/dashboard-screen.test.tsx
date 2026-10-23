@@ -138,12 +138,16 @@ async function advance(ms: number) {
  * 発火を取りこぼすことがあるため、1ms ずつ進めて判定する。
  */
 async function advanceUntil(done: () => boolean) {
+  // 1ms ずつ進めると、カバレッジ計測のように 1 ステップが重い環境では
+  // 既定のタイムアウト（5 秒）を超える。タイマーの登録時刻のずれを吸収できる
+  // 程度の粗さ（250ms）で進め、条件が満たされた時点で止める。
+  const stepMilliseconds = 250;
   for (
     let elapsed = 0;
     elapsed < statusRefreshIntervalMs * 2 && !done();
-    elapsed += 1
+    elapsed += stepMilliseconds
   ) {
-    await advance(1);
+    await advance(stepMilliseconds);
   }
 }
 
