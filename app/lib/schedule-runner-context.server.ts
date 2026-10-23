@@ -32,9 +32,7 @@ export type SchedulePlanReplacer = {
 
 /** 予約実行器の load context キー。`server/app.ts` が実体（または `null`）を設定する。 */
 export const scheduleRunnerContext: RouterContext<SchedulePlanReplacer | null> =
-  sharedRouterContext<SchedulePlanReplacer | null>(
-    scheduleRunnerContextSlot,
-  );
+  sharedRouterContext<SchedulePlanReplacer | null>(scheduleRunnerContextSlot);
 
 /** `RouterContextProvider` のうち `requireScheduleRunner` が使う部分。 */
 type RouterContextProviderLike = { get: <T>(key: RouterContext<T>) => T };

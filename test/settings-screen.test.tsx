@@ -63,7 +63,8 @@ function renderSettings(
       path: '/settings',
       Component: Settings,
       loader: () => data,
-      action: async () => options.action?.() ?? { result: 'succeeded', schedules: 1 },
+      action: async () =>
+        options.action?.() ?? { result: 'succeeded', schedules: 1 },
     },
   ]);
 
@@ -97,9 +98,7 @@ describe('設定画面の描画', () => {
   });
 
   test('登録が無いときはその旨を表示する', async () => {
-    renderSettings(
-      loaderData({ servers: [], groups: [], schedules: [] }),
-    );
+    renderSettings(loaderData({ servers: [], groups: [], schedules: [] }));
 
     expect(
       await screen.findByText('サーバーが登録されていません。'),

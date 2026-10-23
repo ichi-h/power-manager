@@ -63,9 +63,7 @@ export type SettingsLoaderData = {
  * 認証は root のミドルウェアが要求する（FR-10, SEC-01）。定義は再読込のたびに
  * 差し替わるため、キャッシュを許さない応答にしておく。
  */
-export function loader({
-  context,
-}: Route.LoaderArgs): SettingsLoaderData {
+export function loader({ context }: Route.LoaderArgs): SettingsLoaderData {
   const config = requireConfigStore(context).current();
 
   return {
@@ -314,9 +312,7 @@ export default function Settings({ loaderData }: Route.ComponentProps) {
               <span>ID: {server.id}</span>
               <span>
                 所属グループ:{' '}
-                {server.groups.length === 0
-                  ? 'なし'
-                  : server.groups.join('、')}
+                {server.groups.length === 0 ? 'なし' : server.groups.join('、')}
               </span>
               <span>
                 接続先: {server.host}:{server.port}
