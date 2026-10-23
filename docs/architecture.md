@@ -133,7 +133,8 @@ export function createLoadContext(runtime: RuntimeConfig, configStore: ConfigSto
 - 仮画面の `/` も loader で `requireRuntimeConfig` を呼ぶ。起動して 1 ページ返すだけで、2 つのモジュールグラフが同じキーを共有していることを確認できる（`npm run smoke` が本番ビルドに対して検証する）。
 - ストリーミングは Web 標準の `ReadableStream` をそのまま流す。
 - SIGTERM/SIGINT では `shutdown(signal)` が `server.close()` → スケジューラ停止 → リングバッファの書き出し（何もしない）→ `process.exit(0)` を進める。5 秒で強制終了するタイマーはその場で張り、`server.close()` の完了時に `clearTimeout` で解除する。起動時に張ると、正常に動いているプロセスが時間経過だけで落ちるため張らない。
-- 開発時（`react-router dev`）は Vite がサーバーモジュールを再インポートするため、スケジューラはモジュールスコープのシングルトンで二重起動を防ぎ、`NODE_ENV !== "production"` では起動しない。
+- 開発時も同じ `createLoadContext` を使う。`@react-router/dev` の `react-router dev` は Vite 開発サーバーを立てるだけで load context を組み立てないため、loader/action が `configStoreContext` を引けず「設定ストアが load context にありません」で失敗する。そこで `server/dev.ts` が Vite を `server.middlewareMode` で起動し、`virtual:react-router/server-build` を要求ごとに `ssrEnvironment.runner.import` して（HMR のため）ビルドと同じ後処理（`withErrorHandler` / `withAllowedActionOrigins`）を施し、`server/dev-handler.ts` の配線で Vite → React Router の順に要求を流す。`npm run dev` はこのエントリを `--conditions=development` 付きで起動する。条件を付けないと、エントリが直接 import する `react-router` と Vite が SSR 用に解決する `react-router` が別ファイル（開発用 / 本番用ビルド）になり、`RouterContextProvider` の `instanceof` 判定が外れる。
+- 開発時は Vite がサーバーモジュールを再インポートするため、スケジューラはモジュールスコープのシングルトンで二重起動を防ぎ、`NODE_ENV !== "production"` では起動しない（開発エントリは `ensureScheduleRunner` を呼ばないため `null` を載せる）。
 
 ### 3.4 プロセス内状態
 

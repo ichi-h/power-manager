@@ -1,7 +1,7 @@
 # suggested_commands
 
 - `npm ci` — 依存インストール（lock 前提）
-- `npm run dev` — Vite 開発サーバー。127.0.0.1:5173（`vite.config.ts` で host 固定）
+- `npm run dev` — `server/dev.ts`（Vite middlewareMode + 本番と同じ load context）。127.0.0.1:5173（`POWER_MANAGER_PORT`）。`--conditions=development` 付きで起動
 - `npm run typecheck` — `react-router typegen && tsc --noEmit`
 - `npm run test` — `vitest run`（`test/**/*.test.{ts,tsx}`）
 - `npm run coverage` — カバレッジ。閾値 statements/functions/lines 60、branches 65

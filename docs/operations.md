@@ -180,7 +180,7 @@ v1 形式との後方互換は持たない（`version: 1` は検証エラーに�
 
 ```sh
 npm ci                 # 依存の導入（bun は使わない）
-npm run dev            # react-router dev（Vite、127.0.0.1 で待受）
+npm run dev            # Vite を middlewareMode で起動する自前サーバー（127.0.0.1 で待受）
 npm run typecheck      # react-router typegen && tsc --noEmit
 npm run test           # vitest run
 npm run build          # react-router build + scripts/bundle-server.mjs（server/index.js を生成）
@@ -188,7 +188,8 @@ npm run start          # node ./server/index.js（バンドル済みエントリ
 ```
 
 - 開発時も Node.js 24 を使う。`bun` は使わない。
-- `npm run dev` では Vite がサーバーモジュールを再インポートする。スケジューラは `NODE_ENV !== "production"` では起動しない（[アーキテクチャ設計](architecture.md) 3.3）。
+- `npm run dev` は `react-router dev` ではなく `server/dev.ts` を起動する。`react-router dev` は load context を組み立てないため、loader/action が「設定ストアが load context にありません」で失敗する。自前サーバーは本番と同じ `createLoadContext` を挿し、`--conditions=development` 付きで起動して `react-router` の実体を 1 つに揃える（[アーキテクチャ設計](architecture.md) 3.3）。
+- 開発サーバーでも Vite がサーバーモジュールを再インポートする。スケジューラは `NODE_ENV !== "production"` では起動しない（[アーキテクチャ設計](architecture.md) 3.3）。
 - 開発用の設定例として `dev/config.json` を同梱する。`POWER_MANAGER_CONFIG_PATH=$PWD/dev/config.json` のように絶対パスで指す。起動時に検証を通るため、既定値の適用例と daily / weekly の予約の両方を確認できる。`npm run smoke` も既定でこのファイルを読む（`SMOKE_MANAGED_CONFIG` で差し替え可能）。
 - `POWER_MANAGER_PUBLIC_ORIGIN=http://localhost:5173` のように `localhost` の HTTP Origin を開発時のみ許可する。
 

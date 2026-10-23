@@ -18,7 +18,7 @@ Node.js 24 を使います。Bun は使いません。
 
 ```sh
 npm ci
-npm run dev          # 開発サーバー（Vite、127.0.0.1:5173）
+npm run dev          # 開発サーバー（Vite + React Router、127.0.0.1:5173）
 npm run typecheck    # react-router typegen && tsc --noEmit
 npm run test         # Vitest
 npm run build        # react-router build + サーバーエントリのバンドル（server/index.js）
@@ -28,7 +28,9 @@ npm run smoke        # build 後に起動と HTML 応答を確認
 
 ### 開発サーバーの起動手順
 
-`npm run dev` は環境変数がすべて揃っていないと起動時に終了コード `78` で止まります。ローカルでは次の 2 つを用意します。
+`npm run dev` は `react-router dev` ではなく `server/dev.ts`（Vite を middlewareMode で使う自前サーバー）を起動します。本番と同じ load context を組み立てるため、loader/action も開発中に動きます。
+
+環境変数がすべて揃っていないと起動時に終了コード `78` で止まります。ローカルでは次の 2 つを用意します。
 
 1. 管理対象設定は同梱の `dev/config.json` を使います（既定値の適用例と daily / weekly の予約入り）。
 2. 環境変数は `.example.envrc` を雛形に `.envrc` などへ置きます。最低限、次の値を設定してください。
@@ -44,6 +46,7 @@ export POWER_MANAGER_SSH_IDENTITY_FILE="$PWD/.local/dev_ssh_key"
 export POWER_MANAGER_SSH_KNOWN_HOSTS_FILE="$PWD/.local/known_hosts"
 ```
 
+- 起動時は `POWER_MANAGER_ENV_FILE`（未指定なら作業ディレクトリの `.env`）も読みます。ただし `process.loadEnvFile` はシェルスクリプトではなく `KEY=VALUE` の並びとして解釈するため、`.env` では `export` を書かず、`$PWD` や `${VAR}` などの変数展開・クォート内のエスケープ処理もされません（値がそのまま入る）。シェルや direnv 向けの `.envrc`（`export` と `$PWD` 展開）とは書式が違うので、取り違えると `絶対パスを正規化した形で指定してください` や `Argon2id のハッシュ…` で起動に失敗します。既に環境にある変数は上書きされません。
 - `POWER_MANAGER_SSH_*` は開発中は実在する通常ファイル（例: `package.json`）でも構いません。起動時の検証はパスの形式だけを見ます。
 - `POWER_MANAGER_PUBLIC_ORIGIN` は開発時のみ `localhost` の HTTP Origin を許可します（`http://127.0.0.1:5173` は不可）。
 - パスワードハッシュはアプリケーションでは生成しません。次のように作ります。
