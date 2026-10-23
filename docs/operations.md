@@ -199,7 +199,7 @@ npm run start          # node ./server/index.js（バンドル済みエントリ
 - `packages.x86_64-linux.default`
 - `packages.aarch64-linux.default`
 - `nixosModules.default`
-- `devShells.<system>.default`（nodejs_24、openssh、nixpkgs-fmt など）
+- `devShells.<system>.default`（nodejs_24、openssh、biome）
 
 ### 4.2 derivation
 
@@ -211,7 +211,17 @@ npm run start          # node ./server/index.js（バンドル済みエントリ
 buildNpmPackage {
   pname = "power-manager";
   version = "0.2.0";
-  src = ./.;
+
+  # ビルドに必要なファイルだけを対象にする。docs や .github を変えただけでは
+  # derivation のハッシュを動かさない。
+  src = lib.fileset.toSource {
+    root = ./.;
+    fileset = lib.fileset.unions [
+      ./package.json ./package-lock.json ./tsconfig.json
+      ./vite.config.ts ./react-router.config.ts
+      ./app ./server ./scripts
+    ];
+  };
 
   npmDepsHash = "sha256-...";      # nix build のエラー出力に従って固定する
   nodejs = nodejs_24;
@@ -229,7 +239,8 @@ buildNpmPackage {
     mkdir -p $out/share/power-manager
     cp -r build $out/share/power-manager/build
     install -Dm644 server/index.js $out/share/power-manager/server/index.js
-    cp package.json $out/share/power-manager/package.json
+    install -Dm644 package.json $out/share/power-manager/package.json
+    npm prune --omit=dev --ignore-scripts
     cp -r node_modules $out/share/power-manager/node_modules
 
     makeWrapper ${lib.getExe nodejs_24} $out/bin/power-manager \
@@ -237,6 +248,32 @@ buildNpmPackage {
       --add-flags "$out/share/power-manager/server/index.js" \
       --prefix PATH : ${lib.makeBinPath [ openssh ]}
     runHook postInstall
+  '';
+
+  # 配置したパッケージ単体で起動経路が成立していることを確かめる。
+  doInstallCheck = true;
+  installCheckPhase = ''
+    runHook preInstallCheck
+    share=$out/share/power-manager
+    # 配置物の欠落を検出する。
+    for artifact in "$share/server/index.js" "$share/build/server/index.js" \
+      "$share/build/client" "$share/package.json"; do
+      [ -e "$artifact" ] || { echo "配置物が足りません: $artifact" >&2; exit 1; }
+    done
+
+    # 環境変数が無ければ待受を開始せず EX_CONFIG（78）で終了すること。
+    status=0
+    output=$(env -i "$out/bin/power-manager" 2>&1) || status=$?
+    [ "$status" -eq 78 ] || { echo "終了コードが 78 ではありません: $status" >&2; exit 1; }
+    case "$output" in
+      *'"event":"startup_failed"'*) ;;
+      *) echo "startup_failed のログが出ていません" >&2; exit 1 ;;
+    esac
+
+    # OpenSSH がラッパーの PATH に載っていること。
+    grep -q '${lib.makeBinPath [ openssh ]}' "$out/bin/power-manager" || {
+      echo "ラッパーの PATH に openssh がありません" >&2; exit 1; }
+    runHook postInstallCheck
   '';
 
   meta = {
@@ -248,7 +285,8 @@ buildNpmPackage {
 ```
 
 - サーバーエントリは `npm run build` の後半で `scripts/bundle-server.mjs`（esbuild）が `server/index.js` にバンドルする。`server/index.ts` をそのまま配置すると、`app/` 配下の TypeScript を相対 import しているため `ERR_MODULE_NOT_FOUND` で起動できない。配置対象はバンドル済みの `server/index.js` だけにする（`server/*.ts` は置かない）。
-- `node_modules` は本番依存のみを残す。`buildNpmPackage` の `npmInstallFlags = [ "--omit=dev" ]` を検討する。
+- `node_modules` は本番依存のみを残す。ビルド後の `installPhase` で `npm prune --omit=dev --ignore-scripts` を実行してから配置する。`npmInstallFlags = [ "--omit=dev" ]` はビルド時の devDependencies（`react-router build`、`esbuild`、`vite`）まで落としてしまうため使わない。
+- `doInstallCheck` で、配置物（`server/index.js`、`build/server/index.js`、`build/client`、`package.json`）が揃っていること、環境変数が無い状態で EX_CONFIG（78）と `startup_failed` ログで終了すること、ラッパーの `PATH` に OpenSSH が載っていることを確認する。CI のスモークテストは開発ツリーの `npm run build` を見るため、Nix 配置の抜けはここで捕まえる。
 - OpenSSH は `makeWrapper` で `PATH` に追加し、`nix run` と `nix profile install` で `ssh` を発見できるようにする。NixOS モジュールも同様に `PATH` を設定する。
 - 実行時にファイルを書かないため、`StateDirectory` は不要（[セキュリティ設計](security.md) 6 章）。
 
