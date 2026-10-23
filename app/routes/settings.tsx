@@ -96,7 +96,9 @@ export function isReloadPayload(value: unknown): value is ReloadPayload {
   if (candidate.result === 'failed') return true;
   if (candidate.result !== 'succeeded') return false;
   // 成功の応答は「計画件数、または実行器が無いことを示す null」に限る（bd05）。
-  return candidate.schedules === null || typeof candidate.schedules === 'number';
+  return (
+    candidate.schedules === null || typeof candidate.schedules === 'number'
+  );
 }
 
 /**
@@ -263,7 +265,9 @@ function describeTarget(
 ): string {
   // ID・グループとも ID を出す。一覧画面の「最近の実行」（app/routes/dashboard.tsx）と
   // 同じ表記に揃える（bd05）。
-  return target.type === 'server' ? `サーバー ${target.id}` : `グループ ${target.id}`;
+  return target.type === 'server'
+    ? `サーバー ${target.id}`
+    : `グループ ${target.id}`;
 }
 
 /** 操作の表示文言。 */

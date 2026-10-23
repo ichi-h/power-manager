@@ -234,7 +234,14 @@ describe('設定画面の loader', () => {
 
 describe('設定画面の応答ヘッダ', () => {
   test('loader の応答はキャッシュを許さない（SEC-05, bd05）', () => {
-    const response = new Response(null, { headers: headers({ loaderHeaders: new Headers(), parentHeaders: new Headers(), actionHeaders: new Headers(), errorHeaders: undefined }) });
+    const response = new Response(null, {
+      headers: headers({
+        loaderHeaders: new Headers(),
+        parentHeaders: new Headers(),
+        actionHeaders: new Headers(),
+        errorHeaders: undefined,
+      }),
+    });
     expect(response.headers.get('cache-control')).toBe('no-store');
   });
 });
