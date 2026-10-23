@@ -1422,7 +1422,7 @@ function ResultNotice({
         {result.summary.skipped} 件スキップ
       </p>
       <ul>
-        {result.results.map((item, index) => {
+        {result.results.map((item) => {
           // 実行しなかった理由は語彙ではなく日本語で添える
           // （docs/architecture.md 6.4）。未知の語彙では何も添えない。
           const reason =
@@ -1430,7 +1430,7 @@ function ResultNotice({
               ? skipReasonLabel(item.code)
               : null;
           return (
-            <li key={`${index}:${item.target}`}>
+            <li key={`${item.target}:${item.result}:${item.code ?? ''}`}>
               {names.get(item.target) ?? unknownTargetLabel}:{' '}
               {resultLabels[item.result]}
               {reason === null ? null : `（${reason}）`}
