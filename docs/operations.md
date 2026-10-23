@@ -397,12 +397,19 @@ location / {
 
 ## 6. CI
 
-GitHub Releases とリリース資産のアップロードは行わない。GitHub Actions は PR と main への push で次を実行する。
+GitHub Releases とリリース資産のアップロードは行わない。GitHub Actions（`.github/workflows/ci.yml`）は PR と main への push で、次の 2 ジョブを実行する。
 
-- 型検査（`react-router typegen && tsc --noEmit`）
-- ユニットテストと HTTP 結合テスト（`vitest run`）
-- `x86_64-linux` と `aarch64-linux` の Nix ビルド検証
-- `package-lock.json` と `package.json` の不整合検出（`npm ci` が通ること）
+- `check`（`ubuntu-latest`、Node.js 24）
+  - `npm ci`（`package-lock.json` と `package.json` の不整合検出を兼ねる）
+  - 型検査（`react-router typegen && tsc --noEmit`）
+  - ユニットテストと HTTP 結合テスト（`vitest run`）
+  - カバレッジ計測（`vitest run --coverage`、`vite.config.ts` の閾値）
+  - ビルド（`react-router build` とバンドル）と起動スモーク（`scripts/smoke.mjs`）
+- `nix`（`x86_64-linux` は `ubuntu-latest`、`aarch64-linux` は `ubuntu-24.04-arm`）
+  - `nix build .#packages.<system>.default`
+  - `nix build .#checks.<system>.nixos-module`（6.1）
+
+Nix のジョブはアーキテクチャごとにネイティブのホストランナーで動かす（クロスビルドやエミュレーションはしない）。`fail-fast` を無効にしているため、片方のアーキテクチャが失敗しても他方は最後まで実行される。Cachix などのバイナリキャッシュは導入しない。
 
 フォーマッタとリンタは依存に加えていない。導入する場合は `package.json` のスクリプトと CI の両方を更新する。
 
