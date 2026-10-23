@@ -577,6 +577,7 @@ export type PowerOperator = {
       readonly sshIdentityFile: string;
       readonly sshKnownHostsFile: string;
     },
+    options?: { readonly scheduleId?: string },
   ): Promise<BatchOperationOutcome>;
   /** 現在実行中の対象 ID 一覧。テストで排他状態を確認するためにだけ公開する。 */
   busyTargets(): ReadonlySet<string>;
@@ -739,11 +740,21 @@ export function createPowerOperator(
       return operateOne(serverId, target, operation, server, runtime, options);
     },
 
-    async operateAll(scope, operation, targets, runtime) {
+    async operateAll(scope, operation, targets, runtime, options) {
       // 一括は busy の対象を除外し、残りを並列度 8 で実行する（FR-11）。
       // 対象は確定済み（ID 重複なし）のため、そのまま 1 台 1 回ずつ実行する。
       // `operateOne` は reject を結果に畳んで返すため、`Promise.all` が reject することは
       // 無く、1 台の失敗や例外で成功分の結果と要約を失わない。
+      // 予約起因の一括実行では `options.scheduleId` を各結果へ運ぶ（FR-13）。
+      const extra =
+        options?.scheduleId === undefined && scope.type !== 'group'
+          ? undefined
+          : {
+              ...(options?.scheduleId === undefined
+                ? {}
+                : { scheduleId: options.scheduleId }),
+              ...(scope.type === 'group' ? { group: scope.id } : {}),
+            };
       const records = await Promise.all(
         targets.map(async (target) =>
           operateOne(
@@ -752,7 +763,7 @@ export function createPowerOperator(
             operation,
             target,
             runtime,
-            scope.type === 'group' ? { group: scope.id } : undefined,
+            extra,
           ),
         ),
       );

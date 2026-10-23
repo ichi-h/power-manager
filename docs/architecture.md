@@ -325,7 +325,7 @@ ssh -i <identityFile>
 | `shutdown`        | `signal`                                                          |
 | `power_operation` | `serverId`、`operation`、`result`、`code`、`group`（一括時）      |
 | `schedule_run`    | `scheduleId`、`target`、`operation`、`result`、`code`             |
-| `schedule_skip`   | `scheduleId`、`code`（`busy` / `missed_schedule`）                |
+| `schedule_skip`   | `scheduleId`、`target`、`operation`、`code`（`busy` / `missed_schedule` / `invalid_configuration`） |
 | `config_reload`   | `result`、`reason`（失敗時）、`schedules`（再計算した予約数）     |
 | `request_failed`  | `code`（`csrf_rejected` / `request_rejected` / `internal_error`）、`reason` |
 

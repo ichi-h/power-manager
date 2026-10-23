@@ -9,6 +9,8 @@
  * （同じく `app/lib/schedule.server.ts`）が行う。`enabled: false` の予約は
  * 対象外とする（次回時刻を計算しない）。
  */
+import type { PowerOperationRecord } from './power.server.ts';
+import type { OperableServer } from './power.server.ts';
 import type { ManagedConfig, Repeat, Schedule, Weekday } from './model.ts';
 
 /**
@@ -38,34 +40,6 @@ const weekdayNumbers: Record<Weekday, number> = {
   fri: 5,
   sat: 6,
 };
-
-/**
- * 同じ JST 日付かどうか。
- *
- * 「再起動・再読込の直後に当日分を再度実行しない」（FR-12）は、「次回時刻を常に
- * 現在時刻より後に計算する」ことで満たすため、この判定はテストと診断補助に使う。
- */
-export function isSameTokyoDate(a: Date, b: Date): boolean {
-  const dayOf = (date: Date): number =>
-    Math.floor((date.getTime() + tokyoOffsetMs) / 86_400_000);
-  return dayOf(a) === dayOf(b);
-}
-
-/**
- * JST での「対象日の `HH:MM`」を UTC の `Date` で表す。
- *
- * JST の暦日を UTC 軸に写す。`dayOffset` は JST での日数ずれ（0 = 今日, 1 = 明日）。
- */
-function _tokyoInstant(dayOffset: number, time: string): Date {
-  const { hour, minute } = parseTime(time);
-  // 現在の JST 日付の 0 時（UTC 軸）を基点にする。
-  const nowUtcMs = Date.now();
-  const tokyoDayStartUtc = Math.floor((nowUtcMs + tokyoOffsetMs) / 86_400_000);
-  const targetDay = tokyoDayStartUtc + dayOffset;
-  // 日界は UTC 0 時と一致しない（JST の 0 時は UTC 前日 15 時）。
-  const dayStartUtcMs = targetDay * 86_400_000 - tokyoOffsetMs;
-  return new Date(dayStartUtcMs + (hour * 60 + minute) * 60_000);
-}
 
 /**
  * 繰り返し定義から、`from` より後の直近の実行時刻を計算する。
@@ -160,14 +134,8 @@ export function createSchedulePlans(
   return plans;
 }
 
-/** 予約対象のサーバー集合を確定する（FR-12 は 1 予約 = 1 操作 × 1 対象）。 */
-export type ScheduleTargets = ReadonlyArray<{
-  readonly id: string;
-  readonly groups: readonly string[];
-}>;
-
 /**
- * 予約の対象をサーバー集合へ確定する。
+ * 予約の対象を実行可能なサーバー集合へ確定する。
  *
  * 予約は「サーバー 1 台またはグループ 1 つ」である（FR-12）。グループは一括操作と
  * 同じ規則（`resolveBatchTargets`）でサーバー集合に確定する。対象が 0 台（未知の
@@ -176,18 +144,17 @@ export type ScheduleTargets = ReadonlyArray<{
 export function resolveScheduleTargets(
   schedule: Schedule,
   config: ManagedConfig,
-): ReadonlyArray<{ readonly id: string }> {
+): ReadonlyArray<OperableServer> {
   if (schedule.target.type === 'server') {
     const server = config.servers.find((s) => s.id === schedule.target.id);
-    return server === undefined ? [] : [{ id: server.id }];
+    return server === undefined ? [] : [server];
   }
   // グループ対象は一括操作と同じ規則で確定する（FR-11 の対象確定を再利用）。
-  const targets = config.servers.filter((server) =>
-    server.groups.includes(
-      schedule.target.type === 'group' ? schedule.target.id : '',
-    ),
+  return config.servers.filter(
+    (server) =>
+      schedule.target.type === 'group' &&
+      server.groups.includes(schedule.target.id),
   );
-  return targets.map((server) => ({ id: server.id }));
 }
 
 /**
@@ -225,7 +192,9 @@ export type ScheduleRunOutcome =
  * 予約実行器が依存する外部機能。
  *
  * `operator` は単体操作・一括操作と同じ実体を共有する（排他とリングバッファの共有）。
- * `now` はテストで時刻を固定するために注入する。
+ * `now` はテストで時刻を固定するために注入する。`onRecord` は実行結果リングバッファ
+ * （FR-13）とログ（NFR-10）への記録経路であり、スキップもこの経路で記録する（FR-12）。
+ * `tickIntervalMs` はテストで短くするための差し替え口である。
  */
 export type ScheduleRunnerDeps = {
   readonly operator: {
@@ -235,42 +204,18 @@ export type ScheduleRunnerDeps = {
         | { readonly type: 'group'; readonly id: string }
         | { readonly type: 'all' },
       operation: 'wake' | 'shutdown',
-      targets: ReadonlyArray<{
-        readonly id: string;
-        readonly macAddress: string;
-        readonly wol: {
-          readonly broadcastAddress: string;
-          readonly port: number;
-        };
-        readonly ssh: {
-          readonly host: string;
-          readonly port: number;
-          readonly user: string;
-          readonly shutdownCommand: string;
-        };
-      }>,
+      targets: ReadonlyArray<OperableServer>,
       runtime: {
         readonly sshIdentityFile: string;
         readonly sshKnownHostsFile: string;
       },
+      options?: { readonly scheduleId?: string },
     ) => Promise<unknown>;
     readonly operate: (
       serverId: string,
       target: { readonly type: 'server'; readonly id: string },
       operation: 'wake' | 'shutdown',
-      server: {
-        readonly macAddress: string;
-        readonly wol: {
-          readonly broadcastAddress: string;
-          readonly port: number;
-        };
-        readonly ssh: {
-          readonly host: string;
-          readonly port: number;
-          readonly user: string;
-          readonly shutdownCommand: string;
-        };
-      },
+      server: OperableServer,
       runtime: {
         readonly sshIdentityFile: string;
         readonly sshKnownHostsFile: string;
@@ -282,94 +227,139 @@ export type ScheduleRunnerDeps = {
     readonly sshIdentityFile: string;
     readonly sshKnownHostsFile: string;
   };
+  /** スキップを記録する経路。指定がなければ標準出力の 1 行 JSON へ出す。 */
+  readonly onRecord?: (
+    record: PowerOperationRecord,
+    event: 'schedule_run' | 'schedule_skip',
+  ) => void;
   readonly logSkip?: (
     scheduleId: string,
-    code: 'busy' | 'missed_schedule',
+    code: 'busy' | 'missed_schedule' | 'invalid_configuration',
   ) => void;
   // テストが後から差し替えられるため readonly にしない。
   now?: () => Date;
+  tickIntervalMs?: number;
 };
 
 /**
- * 1 回のティックで処理する 1 予約分の発火。
+ * 1 回のティックで処理する 1 予約分の発火結果。
  *
- * 戻り値は「実行した / busy スキップ / 遅延スキップ」の別。次回時刻の再計算は
- * 実行器側で行う（発火の結果から決まるため）。
+ * 対象が確定できない予約（未定義のサーバー・未知のグループ）は設定不備であり、
+ * `busy`（実行中）とは区別する（`docs/architecture.md` 6.5 の busy の定義）。
  */
-export type TickResult = 'fired' | 'busy' | 'missed';
+export type TickResult = 'fired' | 'busy' | 'missed' | 'invalid_target';
+
+/** deps から現在時刻を取り出す（テストの差し替えに追従する）。 */
+function nowOf(deps: ScheduleRunnerDeps): Date {
+  return (deps.now ?? (() => new Date()))();
+}
+
+/**
+ * スキップを記録する（FR-12, FR-13, NFR-10）。
+ *
+ * `onRecord` が指定されていれば実行結果と同じ経路（リングバッファ + 1 行 JSON ログ）へ
+ * `schedule_skip` として流す。なければ従来どおり標準出力の専用ログへ出す。
+ * 記録の失敗は予約の実行の成否に影響させない。
+ */
+function recordSkip(
+  schedule: Schedule,
+  deps: ScheduleRunnerDeps,
+  code: 'busy' | 'missed_schedule' | 'invalid_configuration',
+): void {
+  if (deps.onRecord !== undefined) {
+    const record: PowerOperationRecord = {
+      at: nowOf(deps).toISOString(),
+      scheduleId: schedule.id,
+      target: schedule.target,
+      operation: schedule.operation,
+      result: 'skipped',
+      code,
+    };
+    try {
+      deps.onRecord(record, 'schedule_skip');
+    } catch {
+      // 記録の失敗は操作の成否に影響させない。
+    }
+    return;
+  }
+  const skipLogger =
+    deps.logSkip ??
+    ((id: string, c: 'busy' | 'missed_schedule' | 'invalid_configuration') =>
+      logScheduleSkip(id, schedule.target, c));
+  skipLogger(schedule.id, code);
+}
 
 /**
  * 予約 1 件の発火を判定・実行する（FR-12, NFR-12）。
  *
- * - `now` が `nextRunAt` を過ぎていなければ何もしない（`undefined`）。
- * - 遅延が `missedThresholdMs`（10 秒）を超えていれば `missed`。実行せず
- *   `logScheduleSkip` でログに記録する。
+ * - 現在時刻（発火直前に `deps.now` から取り直す）が `nextRunAt` を過ぎていなければ
+ *   何もしない（`undefined`）。直列実行や負荷で生じた実遅延もこの取り直しで判定する。
+ * - 遅延が `missedThresholdMs`（10 秒）を超えていれば `missed`。実行せず記録する。
  * - 対象サーバーのうち 1 台でも `busyTargets()` に含まれていれば `busy`。
- *   待たずにスキップし、ログに記録する。
- * - 対象が 1 台なら `operate`、複数台なら `operateAll`（グループ対象）を使う。
- *   どちらも `scheduleId` を結果へ運ぶ（単体の `operate` の options）。
+ *   待たずにスキップし、記録する。
+ * - 対象が確定できない（0 台・未知の対象）予約は `invalid_target`。実行せず
+ *   `invalid_configuration` として記録する。
+ * - 対象が 1 台なら `operate`、複数台なら `operateAll` を使う。どちらも
+ *   `scheduleId` を結果へ運ぶ（FR-13 の「予約」表示）。
+ *
+ * この関数は reject しない。実行単位の例外は操作の失敗として扱い、ティックから
+ * 投げてプロセスを落とさない（NFR-12 の継続性）。
  */
 export async function fireSchedule(
   plan: SchedulePlan,
   config: ManagedConfig,
   deps: ScheduleRunnerDeps,
-  now: Date,
 ): Promise<TickResult | undefined> {
+  const now = nowOf(deps);
   if (plan.nextRunAt.getTime() > now.getTime()) return undefined;
   const delayMs = now.getTime() - plan.nextRunAt.getTime();
-  const _nowFn = deps.now ?? (() => new Date());
 
   if (delayMs > missedThresholdMs) {
-    (
-      deps.logSkip ??
-      ((id, code) => logScheduleSkip(id, plan.schedule.target, code))
-    )(plan.schedule.id, 'missed_schedule');
+    recordSkip(plan.schedule, deps, 'missed_schedule');
     return 'missed';
   }
 
   const targets = resolveScheduleTargets(plan.schedule, config);
   if (targets.length === 0) {
-    // 対象が確定できない予約（未定義の対象）は実行せず busy として扱う。
-    (
-      deps.logSkip ??
-      ((id, code) => logScheduleSkip(id, plan.schedule.target, code))
-    )(plan.schedule.id, 'busy');
-    return 'busy';
+    // 対象が確定できない予約（未定義の対象）は設定不備であり、busy とは区別する。
+    recordSkip(plan.schedule, deps, 'invalid_configuration');
+    return 'invalid_target';
   }
 
   const busy = deps.operator.busyTargets();
   if (targets.some((t) => busy.has(t.id))) {
-    (
-      deps.logSkip ??
-      ((id, code) => logScheduleSkip(id, plan.schedule.target, code))
-    )(plan.schedule.id, 'busy');
+    recordSkip(plan.schedule, deps, 'busy');
     return 'busy';
   }
 
+  const scheduleId = plan.schedule.id;
   if (targets.length === 1) {
-    const targetId = targets[0]?.id;
-    if (targetId === undefined) return 'busy';
-    const server = config.servers.find((s) => s.id === targetId);
-    if (server === undefined) return 'busy';
-    await deps.operator.operate(
-      server.id,
-      { type: 'server', id: server.id },
-      plan.schedule.operation,
-      server,
-      deps.runtime,
-      { scheduleId: plan.schedule.id },
-    );
+    const server = targets[0] as OperableServer;
+    try {
+      await deps.operator.operate(
+        server.id,
+        { type: 'server', id: server.id },
+        plan.schedule.operation,
+        server,
+        deps.runtime,
+        { scheduleId },
+      );
+    } catch {
+      // 実行単位の例外は操作の失敗として扱う。実行器の内部の詳細はログに載せない
+      // （SEC-05）。operator は通常 reject を結果に畳むため、ここは安全網である。
+    }
   } else {
-    await deps.operator.operateAll(
-      { type: 'group', id: plan.schedule.target.id },
-      plan.schedule.operation,
-      config.servers.filter(
-        (server) =>
-          plan.schedule.target.type === 'group' &&
-          server.groups.includes(plan.schedule.target.id),
-      ),
-      deps.runtime,
-    );
+    try {
+      await deps.operator.operateAll(
+        { type: 'group', id: plan.schedule.target.id },
+        plan.schedule.operation,
+        targets,
+        deps.runtime,
+        { scheduleId },
+      );
+    } catch {
+      // 同上。
+    }
   }
   return 'fired';
 }
@@ -386,8 +376,12 @@ export async function fireSchedule(
 export type ScheduleRunner = {
   /** スケジューラを始動する。すでに動いている場合は何もしない。 */
   start(): void;
-  /** スケジューラを停止する。テストと終了処理のため。 */
-  stop(): void;
+  /**
+   * スケジューラを停止する。テストと終了処理のため。
+   *
+   * 実行中のティックの完了を待ってから解決する（進行中の発火を置き去りにしない）。
+   */
+  stop(): Promise<void>;
   /** 動作中かどうか。テスト用。 */
   isRunning(): boolean;
   /** 計画を原子的に差し替える（j004）。再読込時に呼ぶ。 */
@@ -395,6 +389,29 @@ export type ScheduleRunner = {
   /** 現在の計画。テスト用。 */
   plans(): readonly SchedulePlan[];
 };
+
+/**
+ * 予約の「本日の実行時刻」が既に過ぎているならその時刻を、そうでなければ `null` を返す。
+ *
+ * 初回ロード・再読込では、次回時刻は常に現在より後に計算されるため、本日の分は
+ * 実行されない（FR-12）。その事実を黙って捨てず、スキップとして記録するための判定。
+ * weekly は本日が指定曜日のときだけ本日の分を持つ。
+ */
+function passedTodayRun(
+  repeat: Repeat,
+  now: Date,
+): Date | null {
+  const { hour, minute } = parseTime(repeat.time);
+  const tokyoDay = Math.floor((now.getTime() + tokyoOffsetMs) / 86_400_000);
+  const instant = new Date(
+    tokyoDay * 86_400_000 - tokyoOffsetMs + (hour * 60 + minute) * 60_000,
+  );
+  if (instant.getTime() > now.getTime()) return null;
+  if (repeat.kind === 'daily') return instant;
+  const weekday = (((tokyoDay + 4) % 7) + 7) % 7;
+  const wanted = repeat.days.some((day) => weekdayNumbers[day] === weekday);
+  return wanted ? instant : null;
+}
 
 /** 作成済みの共有実行器。モジュールスコープで 1 つだけ。 */
 let sharedRunner: ScheduleRunner | null = null;
@@ -410,46 +427,85 @@ export function createScheduleRunner(
   deps: ScheduleRunnerDeps,
 ): ScheduleRunner {
   // 計画は 1 つのオブジェクトに束ね、参照の差し替えだけで原子的に更新する。
-  let state: {
-    readonly plans: readonly SchedulePlan[];
-    readonly config: ManagedConfig;
-  } = {
-    plans: createSchedulePlans(
-      initialConfig,
-      (deps.now ?? (() => new Date()))(),
-    ),
-    config: initialConfig,
-  };
-  let timer: ReturnType<typeof setInterval> | null = null;
-  let running = false;
-
   // deps.now はテストで後から差し替えられるため、毎回参照する。
   const nowFn = (): Date => (deps.now ?? (() => new Date()))();
 
-  const tick = async (): Promise<void> => {
+  /**
+   * 計画を作る。
+   *
+   * 本日の実行時刻が既に過ぎている有効な予約は、この後のティックでも実行されない
+   * （次回時刻は常に現在より後になる）。その事実をスキップとして記録する（FR-12）。
+   */
+  const buildState = (config: ManagedConfig) => {
     const now = nowFn();
-    // 差し替え安全のために、このティックで扱う計画を最初に取り出す（スナップショット）。
-    const current = state;
-    for (const plan of current.plans) {
-      if (plan.nextRunAt.getTime() > now.getTime()) continue;
-      const result = await fireSchedule(plan, current.config, deps, now);
-      if (result === undefined) continue;
-      // 発火・スキップのいずれでも次回時刻を再計算する。途中で再読込が入った場合は
-      // state が置き換わっているので、それを上書きしないよう現在の state を起点にする。
-      const latest = state;
-      if (latest !== current) continue; // 再読込済み。新しい計画が次回時刻を持つ。
-      const next = new Map(
-        latest.plans.map((p) => [p.schedule.id, p.nextRunAt] as const),
+    for (const schedule of config.schedules) {
+      if (!schedule.enabled) continue;
+      if (passedTodayRun(schedule.repeat, now) !== null) {
+        recordSkip(schedule, deps, 'missed_schedule');
+      }
+    }
+    return { plans: createSchedulePlans(config, now), config };
+  };
+
+  let state: {
+    readonly plans: readonly SchedulePlan[];
+    readonly config: ManagedConfig;
+  } = buildState(initialConfig);
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let running = false;
+  /** 実行中のティックの数。`stop()` の完了待ちに使う。 */
+  let inFlight = 0;
+  /** `stop()` の完了待ちを解決する。実行中のティックがなければ即座に解決する。 */
+  let quiesced: (() => void) | null = null;
+
+
+  const tick = async (): Promise<void> => {
+    inFlight += 1;
+    try {
+      const now = nowFn();
+      // 差し替え安全のために、このティックで扱う計画を最初に取り出す（スナップショット）。
+      const current = state;
+      const due = current.plans.filter(
+        (plan) => plan.nextRunAt.getTime() <= now.getTime(),
       );
-      next.set(plan.schedule.id, nextRunTime(plan.schedule.repeat, nowFn()));
-      state = {
-        ...latest,
-        plans: latest.plans.map((p) =>
-          p.schedule.id === plan.schedule.id
-            ? { ...p, nextRunAt: next.get(plan.schedule.id) as Date }
-            : p,
-        ),
-      };
+      if (due.length === 0) return;
+      // 期限到来分の次回時刻を、発火の前にまとめて前進させる。発火の成否・例外に
+      // 依らず前進するため、1 件目の発火が例外でも 2 件目以降の前進が落ちない。
+      // また発火前に前進するため、直列実行や長い発火の間に同じ回が二重発火しない。
+      if (state === current) {
+        const dueIds = new Set(due.map((plan) => plan.schedule.id));
+        state = {
+          ...current,
+          plans: current.plans.map((plan) =>
+            dueIds.has(plan.schedule.id)
+              ? { ...plan, nextRunAt: nextRunTime(plan.schedule.repeat, now) }
+              : plan,
+          ),
+        };
+      }
+      // 発火は並行に行う（NFR-12）。1 件の長い操作（SSH 停止は最大 30 秒）が他の
+      // 予約を遅らせない。fireSchedule は reject しないため例外は漏れない。
+      await Promise.all(
+        due.map((plan) => fireSchedule(plan, current.config, deps)),
+      );
+    } catch (error) {
+      // ティック自体の失敗（deps の実装の不具合など）を記録して継続する。
+      // `setInterval` のコールバックは reject を捨てるため、ここで受け止める。
+      console.error(
+        JSON.stringify({
+          event: 'schedule_run',
+          result: 'failed',
+          code: 'operation_failed',
+          reason: String(error).slice(0, 200),
+        }),
+      );
+    } finally {
+      inFlight -= 1;
+      if (inFlight === 0 && quiesced !== null) {
+        const resolve = quiesced;
+        quiesced = null;
+        resolve();
+      }
     }
   };
 
@@ -460,14 +516,18 @@ export function createScheduleRunner(
       // unref しない。プロセスはスケジューラで生き続ける意図である。
       timer = setInterval(() => {
         void tick();
-      }, tickIntervalMs);
+      }, deps.tickIntervalMs ?? tickIntervalMs);
     },
-    stop() {
+    async stop() {
       if (timer !== null) {
         clearInterval(timer);
         timer = null;
       }
       running = false;
+      if (inFlight === 0) return;
+      await new Promise<void>((resolve) => {
+        quiesced = resolve;
+      });
     },
     isRunning() {
       return running;
@@ -475,10 +535,7 @@ export function createScheduleRunner(
     replacePlans(config: ManagedConfig) {
       // 原子的差し替え（j004）。実行中の発火は参照をスナップショット済みであり、
       // 中断しない。差し替え後のティックから新しい計画で動く。
-      state = {
-        plans: createSchedulePlans(config, nowFn()),
-        config,
-      };
+      state = buildState(config);
     },
     plans() {
       return state.plans;

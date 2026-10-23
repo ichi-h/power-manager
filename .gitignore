@@ -6,3 +6,4 @@ result
 .env
 .direnv
 server/index.js
+issues.db

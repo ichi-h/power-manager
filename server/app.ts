@@ -40,6 +40,7 @@ import {
   getScheduleRunner,
   type ScheduleRunner,
 } from '../app/lib/schedule.server.ts';
+import { scheduleRunnerContext } from '../app/lib/schedule-runner-context.server.ts';
 import { sshRuntimeContext } from '../app/lib/ssh-runtime-context.server.ts';
 import { logRequestFailure } from './log.ts';
 
@@ -63,10 +64,21 @@ const sharedHistory = createOperationHistory();
  * リングバッファ（FR-13）への追加と 1 行 JSON ログ（NFR-10,
  * `docs/architecture.md` 7.1）の両方を行う。いずれも例外を投げないため、
  * 操作の成否には影響しない。
+ *
+ * イベント名は実行の出自で切り替える。予約識別子を持たないレコードは手動操作
+ * （`power_operation`）、予約識別子を持つレコードは予約の実行（`schedule_run`）、
+ * そのうちスキップ（`result: 'skipped'`）は `schedule_skip` とする。
  */
 function recordOperation(record: PowerOperationRecord): void {
   sharedHistory.push(record);
-  logPowerOperation(record);
+  logPowerOperation(
+    record,
+    record.scheduleId === undefined
+      ? 'power_operation'
+      : record.result === 'skipped'
+        ? 'schedule_skip'
+        : 'schedule_run',
+  );
 }
 
 /**
@@ -78,29 +90,32 @@ function recordOperation(record: PowerOperationRecord): void {
 const sharedOperator = createPowerOperator({ onRecord: recordOperation });
 
 /**
- * 予約実行器の共有インスタンス（FR-12）。
+ * 予約実行器を（存在しなければ）作って返す。production 以外では `null` を返す
+ * （テスト・開発で予約が動くと操作を取り違えるため）。
  *
- * `NODE_ENV !== production` では作らない（テスト・開発で予約が動くと操作を
- * 取り違えるため）。作成は `getScheduleRunner` の呼び出し時に行い、起動配線は
- * `createAppListener` で行う。
+ * 共有インスタンスの管理は `getScheduleRunner`（モジュールスコープのシングルトン）に
+ * 一任し、ここでは変数を持たない。
  */
-let sharedScheduleRunner: ScheduleRunner | null = null;
-
-/** 予約実行器を（存在しなければ）作って返す。production でしか呼ばれない。 */
 function ensureScheduleRunner(
   runtime: RuntimeConfig,
   configStore: ConfigStore,
-): ScheduleRunner {
-  if (sharedScheduleRunner === null) {
-    sharedScheduleRunner = getScheduleRunner(configStore.current(), {
-      operator: sharedOperator,
-      runtime: {
-        sshIdentityFile: runtime.sshIdentityFile,
-        sshKnownHostsFile: runtime.sshKnownHostsFile,
-      },
-    });
-  }
-  return sharedScheduleRunner;
+): ScheduleRunner | null {
+  if (process.env.NODE_ENV !== 'production') return null;
+  const runner = getScheduleRunner(configStore.current(), {
+    operator: sharedOperator,
+    runtime: {
+      sshIdentityFile: runtime.sshIdentityFile,
+      sshKnownHostsFile: runtime.sshKnownHostsFile,
+    },
+    // スキップ（busy・missed_schedule）も実行結果と同じリングバッファとログへ
+    // 記録する（FR-12, FR-13）。
+    onRecord: (record, event) => {
+      sharedHistory.push(record);
+      logPowerOperation(record, event);
+    },
+  });
+  if (!runner.isRunning()) runner.start();
+  return runner;
 }
 
 /**
@@ -113,6 +128,7 @@ function ensureScheduleRunner(
 export function createLoadContext(
   runtime: RuntimeConfig,
   configStore: ConfigStore,
+  runner: ScheduleRunner | null = null,
 ): RouterContextProvider {
   const context = new RouterContextProvider();
   context.set(configContext, toPublicRuntimeConfig(runtime));
@@ -128,6 +144,9 @@ export function createLoadContext(
     sshIdentityFile: runtime.sshIdentityFile,
     sshKnownHostsFile: runtime.sshKnownHostsFile,
   });
+  // 予約実行器。再読込（t011）の action から `replacePlans` に到達できるように
+  // 載せる。production 以外では `null` を載せる（予約を動かさない）。
+  context.set(scheduleRunnerContext, runner);
   return context;
 }
 
@@ -188,19 +207,31 @@ async function loadServerBuild(runtime: RuntimeConfig): Promise<ServerBuild> {
   );
 }
 
+/**
+ * 待受と予約実行器の組。
+ *
+ * `runner` は production 以外では `null`（テスト・開発では予約を動かさない）。
+ * 終了処理（`server/index.ts` の `shutdown`）で `runner?.stop()` を呼ぶために返す。
+ */
+export type AppListener = {
+  readonly requestListener: ReturnType<typeof createRequestListener>;
+  readonly runner: ScheduleRunner | null;
+};
+
 export function createAppListener(
   runtime: RuntimeConfig,
   configStore: ConfigStore,
-) {
-  // 予約実行器（FR-12）。production のときだけ起動する。テストや開発では動かさない。
-  if (process.env.NODE_ENV === 'production') {
-    const runner = ensureScheduleRunner(runtime, configStore);
-    runner.start();
-  }
-  return createRequestListener({
-    build: () => loadServerBuild(runtime),
-    // 明示しないと `develop` 扱いになり、開発用の挙動が残る（SEC-05）。
-    mode: 'production',
-    getLoadContext: () => createLoadContext(runtime, configStore),
-  });
+): AppListener {
+  // 予約実行器（FR-12）。production のときだけ作って起動する。テストや開発では
+  // 動かさない。
+  const runner = ensureScheduleRunner(runtime, configStore);
+  return {
+    requestListener: createRequestListener({
+      build: () => loadServerBuild(runtime),
+      // 明示しないと `develop` 扱いになり、開発用の挙動が残る（SEC-05）。
+      mode: 'production',
+      getLoadContext: () => createLoadContext(runtime, configStore, runner),
+    }),
+    runner,
+  };
 }

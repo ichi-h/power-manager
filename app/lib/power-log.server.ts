@@ -53,7 +53,7 @@ export function logPowerOperation(
 export function logScheduleSkip(
   scheduleId: string,
   target: { readonly type: string; readonly id: string },
-  code: 'busy' | 'missed_schedule',
+  code: 'busy' | 'missed_schedule' | 'invalid_configuration',
 ): void {
   console.log(
     JSON.stringify({

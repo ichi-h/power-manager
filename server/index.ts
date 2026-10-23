@@ -46,7 +46,8 @@ try {
 
 const { runtime, configStore } = startup;
 
-const requestListener = createAppListener(runtime, configStore);
+const appListener = createAppListener(runtime, configStore);
+const requestListener = appListener.requestListener;
 
 const server = createServer(
   (request: IncomingMessage, response: ServerResponse) => {
@@ -102,6 +103,9 @@ function shutdown(signal: NodeJS.Signals): void {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(JSON.stringify({ event: 'shutdown', signal }));
+
+  // 予約実行器を止める。実行中のティックの完了を待つ（発火を置き去りにしない）。
+  void appListener.runner?.stop();
 
   const forcedExitTimeout = setTimeout(() => {
     process.exit(1);
