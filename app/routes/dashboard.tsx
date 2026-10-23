@@ -877,6 +877,31 @@ const stateLabels: Record<ServerState, string> = {
   unknown: '未取得',
 };
 
+/**
+ * 状態の色分け。
+ *
+ * 白・黒・グレーの基調を崩さないよう、オンラインだけアクセント色を使い、オフラインは
+ * グレー、未取得は淡い点線相当の淡色にする。色だけで意味を伝えないよう、必ず
+ * `stateLabels` の文言と併記する（FR-03）。
+ */
+const stateTones: Record<
+  ServerState,
+  { readonly dot: string; readonly pill: string }
+> = {
+  online: {
+    dot: 'bg-accent',
+    pill: 'bg-accent-soft text-accent',
+  },
+  offline: {
+    dot: 'bg-ink-subtle',
+    pill: 'bg-subtle text-ink-muted',
+  },
+  unknown: {
+    dot: 'bg-line-strong',
+    pill: 'bg-subtle text-ink-subtle',
+  },
+};
+
 /** 結果の表示文言（FR-07）。種別と対象だけを出し、内部の理由は出さない。 */
 const resultLabels: Record<OperationResultKind, string> = {
   succeeded: '成功',
@@ -1168,6 +1193,9 @@ function OperationButton({
   fetcher: { submit: (target: HTMLFormElement) => void };
   disabled?: boolean;
 }) {
+  // 起動を主要操作（アクセント色）、停止を副次操作（枠線のみ）として描き分ける。
+  const primary = operation === 'wake';
+
   return (
     <form
       method="post"
@@ -1179,7 +1207,19 @@ function OperationButton({
       <input type="hidden" name="intent" value={operation} />
       <input type="hidden" name="target" value={server.id} />
       {/* 進行中は同じ行の 2 つのボタンを閉じ、二重送信と結果の上書きを防ぐ（FR-07）。 */}
-      <button type="submit" disabled={disabled}>
+      <button
+        type="submit"
+        disabled={disabled}
+        className={[
+          'rounded-full border px-3.5 py-1.5 text-xs font-semibold whitespace-nowrap',
+          'transition-colors duration-150',
+          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+          'disabled:cursor-not-allowed disabled:opacity-40',
+          primary
+            ? 'border-transparent bg-accent text-accent-ink hover:bg-accent-hover'
+            : 'border-line-strong bg-surface text-ink-muted hover:border-ink-subtle hover:text-ink',
+        ].join(' ')}
+      >
         {operationLabels[operation]}
       </button>
     </form>
@@ -1247,32 +1287,56 @@ function ServerRow({
     }
   }, [wakeState, wakeData, shutdownState, shutdownData]);
 
+  const tone = stateTones[state];
+
   return (
-    <li>
-      <span>{server.name}</span>
-      <span>
-        所属グループ: {groupNames.length === 0 ? 'なし' : groupNames.join('、')}
-      </span>
-      <span>状態: {stateLabels[state]}</span>
-      <OperationButton
-        server={server}
-        operation="wake"
-        fetcher={wakeFetcher}
-        disabled={running}
-      />
-      <OperationButton
-        server={server}
-        operation="shutdown"
-        fetcher={shutdownFetcher}
-        disabled={running}
-      />
-      {running ? <span role="status">実行中</span> : null}
-      {running || latest === undefined ? null : (
-        <span role="status">
-          {operationLabels[latest.result.operation]}:{' '}
-          {resultLabels[latest.result.result]}
+    <li className="flex flex-col gap-5 rounded-card border border-line bg-surface p-5 shadow-card transition-shadow duration-200 hover:shadow-raised sm:flex-row sm:items-center sm:justify-between sm:gap-8 sm:p-6">
+      <div className="flex min-w-0 items-start gap-4">
+        {/* 色だけで状態を伝えない。必ず右側の文言と併せて読ませる（FR-03）。 */}
+        <span
+          aria-hidden="true"
+          className={`mt-2 size-2.5 shrink-0 rounded-full ${tone.dot}`}
+        />
+        <div className="min-w-0">
+          <span className="block truncate text-lg font-semibold tracking-tight text-ink">
+            {server.name}
+          </span>
+          <span className="mt-1 block text-xs font-medium text-ink-subtle">
+            所属グループ:{' '}
+            {groupNames.length === 0 ? 'なし' : groupNames.join('、')}
+          </span>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
+        <span
+          className={`mr-1 inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${tone.pill}`}
+        >
+          状態: {stateLabels[state]}
         </span>
-      )}
+        <OperationButton
+          server={server}
+          operation="wake"
+          fetcher={wakeFetcher}
+          disabled={running}
+        />
+        <OperationButton
+          server={server}
+          operation="shutdown"
+          fetcher={shutdownFetcher}
+          disabled={running}
+        />
+        {running ? (
+          <span role="status" className="text-xs font-medium text-ink-muted">
+            実行中
+          </span>
+        ) : null}
+        {running || latest === undefined ? null : (
+          <span role="status" className="text-xs font-medium text-ink-muted">
+            {operationLabels[latest.result.operation]}:{' '}
+            {resultLabels[latest.result.result]}
+          </span>
+        )}
+      </div>
     </li>
   );
 }
@@ -1282,17 +1346,26 @@ function RecentRow({ record }: { record: HistoryRecord }) {
   const reason = toReasonLabel(record);
 
   return (
-    <li>
-      <time dateTime={record.at}>{record.at}</time>
-      <span>予約: {record.scheduleId ?? 'なし'}</span>
-      <span>
-        対象: {record.target.type === 'server' ? 'サーバー' : 'グループ'}{' '}
-        {record.target.id}
-      </span>
-      <span>操作: {operationLabels[record.operation]}</span>
-      <span>結果: {resultLabels[toResultKind(record)]}</span>
-      {/* 内部の分類名は出さない。出すのは実行しなかった理由だけである（SEC-05）。 */}
-      {reason === null ? null : <span>理由: {reason}</span>}
+    <li className="flex flex-col gap-2 border-line/70 border-b py-3.5 text-xs text-ink-muted last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:gap-8">
+      <time
+        dateTime={record.at}
+        className="font-mono text-xs text-ink-subtle tabular-nums"
+      >
+        {record.at}
+      </time>
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+        <span>予約: {record.scheduleId ?? 'なし'}</span>
+        <span>
+          対象: {record.target.type === 'server' ? 'サーバー' : 'グループ'}{' '}
+          {record.target.id}
+        </span>
+        <span>操作: {operationLabels[record.operation]}</span>
+        <span className="font-medium text-ink">
+          結果: {resultLabels[toResultKind(record)]}
+        </span>
+        {/* 内部の分類名は出さない。出すのは実行しなかった理由だけである（SEC-05）。 */}
+        {reason === null ? null : <span>理由: {reason}</span>}
+      </div>
     </li>
   );
 }
@@ -1323,50 +1396,74 @@ function BatchControls({
   const succeeded = isBatchOperationResult(data) ? data : null;
 
   return (
-    <div>
-      {(['wake', 'shutdown'] as const).map((operation) => (
-        <form
-          key={operation}
-          method="post"
-          onSubmit={(event) => {
-            // スクリプト有効時は fetcher で送り、画面遷移を起こさない（FR-14）。
-            // 停止の確認は action が確認ページへ送り返すことで挟む（SEC-07）。
-            event.preventDefault();
-            fetcher.submit(event.currentTarget);
-          }}
-        >
-          <input type="hidden" name="intent" value={`${operation}-group`} />
-          <input
-            type="hidden"
-            name="scopeKind"
-            value={scope.type === 'all' ? 'all' : 'group'}
-          />
-          {scope.type === 'group' ? (
-            <input type="hidden" name="scopeId" value={scope.id} />
-          ) : null}
-          {operation === 'shutdown' ? (
-            // 停止は確認ページを経由させる。action は `confirmedIntent` の無い
-            // 停止要求を操作せず確認ページへ送り返す（FR-11, SEC-07）。
-            <input type="hidden" name="confirmed" defaultValue="" />
-          ) : null}
-          <button type="submit" disabled={running || targets.length === 0}>
-            {scope.type === 'all' ? '全台' : 'グループ'}
-            {operationLabels[operation]}
-          </button>
-        </form>
-      ))}
-      {running ? <span role="status">一括実行中</span> : null}
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap gap-2">
+        {(['wake', 'shutdown'] as const).map((operation) => (
+          <form
+            key={operation}
+            method="post"
+            onSubmit={(event) => {
+              // スクリプト有効時は fetcher で送り、画面遷移を起こさない（FR-14）。
+              // 停止の確認は action が確認ページへ送り返すことで挟む（SEC-07）。
+              event.preventDefault();
+              fetcher.submit(event.currentTarget);
+            }}
+          >
+            <input type="hidden" name="intent" value={`${operation}-group`} />
+            <input
+              type="hidden"
+              name="scopeKind"
+              value={scope.type === 'all' ? 'all' : 'group'}
+            />
+            {scope.type === 'group' ? (
+              <input type="hidden" name="scopeId" value={scope.id} />
+            ) : null}
+            {operation === 'shutdown' ? (
+              // 停止は確認ページを経由させる。action は `confirmedIntent` の無い
+              // 停止要求を操作せず確認ページへ送り返す（FR-11, SEC-07）。
+              <input type="hidden" name="confirmed" defaultValue="" />
+            ) : null}
+            <button
+              type="submit"
+              disabled={running || targets.length === 0}
+              className={[
+                'rounded-full border px-4 py-2 text-xs font-semibold whitespace-nowrap',
+                'transition-colors duration-150',
+                'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+                'disabled:cursor-not-allowed disabled:opacity-40',
+                operation === 'wake'
+                  ? 'border-transparent bg-accent text-accent-ink hover:bg-accent-hover'
+                  : 'border-line-strong bg-surface text-ink-muted hover:border-ink-subtle hover:text-ink',
+              ].join(' ')}
+            >
+              {scope.type === 'all' ? '全台' : 'グループ'}
+              {operationLabels[operation]}
+            </button>
+          </form>
+        ))}
+      </div>
+      {running ? (
+        <span role="status" className="text-xs font-medium text-ink-muted">
+          一括実行中
+        </span>
+      ) : null}
       {running || data === undefined ? null : failure !== null ? (
-        <div role="alert">
-          <p>{failure.message}</p>
+        <div
+          role="alert"
+          className="rounded-xl border border-line bg-subtle px-4 py-3"
+        >
+          <p className="text-sm text-ink">{failure.message}</p>
         </div>
       ) : succeeded !== null ? (
-        <div>
-          <p>
+        <div
+          role="status"
+          className="rounded-xl border border-line bg-subtle px-4 py-3"
+        >
+          <p className="text-sm font-medium text-ink">
             {succeeded.summary.ok} 件成功 / {succeeded.summary.failed} 件失敗 /{' '}
             {succeeded.summary.skipped} 件スキップ
           </p>
-          <ul>
+          <ul className="mt-2 space-y-1 text-xs text-ink-muted">
             {succeeded.results.map((result) => (
               <li key={`${result.target}:${result.result}`}>
                 {names.get(result.target) ?? unknownTargetLabel}:{' '}
@@ -1400,28 +1497,40 @@ function ResultNotice({
 }) {
   if (result.kind === 'error') {
     return (
-      <div role="alert">
-        <p>{errorMessages[result.reason]}</p>
+      <div
+        role="alert"
+        className="rounded-card border border-line bg-subtle px-5 py-4"
+      >
+        <p className="text-sm font-medium text-ink">
+          {errorMessages[result.reason]}
+        </p>
       </div>
     );
   }
 
   if (result.kind === 'single') {
     return (
-      <p role="status">
-        {names.get(result.target) ?? unknownTargetLabel}:{' '}
-        {operationLabels[result.operation]}: {resultLabels[result.result]}
-      </p>
+      <div
+        role="status"
+        className="rounded-card border border-line bg-surface px-5 py-4 shadow-card"
+      >
+        <p className="text-sm text-ink">
+          {`${names.get(result.target) ?? unknownTargetLabel}: ${operationLabels[result.operation]}: ${resultLabels[result.result]}`}
+        </p>
+      </div>
     );
   }
 
   return (
-    <div role="status">
-      <p>
+    <div
+      role="status"
+      className="rounded-card border border-line bg-surface px-5 py-4 shadow-card"
+    >
+      <p className="text-sm font-medium text-ink">
         {result.summary.ok} 件成功 / {result.summary.failed} 件失敗 /{' '}
         {result.summary.skipped} 件スキップ
       </p>
-      <ul>
+      <ul className="mt-2 space-y-1 text-xs text-ink-muted">
         {result.results.map((item) => {
           // 実行しなかった理由は語彙ではなく日本語で添える
           // （docs/architecture.md 6.4）。未知の語彙では何も添えない。
@@ -1464,58 +1573,126 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
     .filter((entry) => entry.servers.length > 0);
 
   return (
-    <section>
-      <h2>サーバー一覧</h2>
+    <div className="space-y-12">
+      <header className="flex flex-col gap-4">
+        <p className="text-xs font-semibold tracking-[0.18em] text-ink-subtle uppercase">
+          Overview
+        </p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <h2 className="text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
+            サーバー一覧
+          </h2>
+          <p className="text-sm text-ink-muted">
+            状態は 15 秒ごとに自動で更新されます。
+          </p>
+        </div>
+      </header>
+
       {loaderData.result === null ? null : (
         <ResultNotice result={loaderData.result} names={serverNames} />
       )}
-      {loaderData.servers.length === 0 ? null : (
-        <section aria-label="全台一括">
-          <h3>すべてのサーバー</h3>
-          <BatchControls
-            scope={{ type: 'all' }}
-            targets={loaderData.servers}
-            names={serverNames}
-          />
-        </section>
-      )}
-      {groupsWithServers.map(({ group, servers }) => (
-        <section key={group.id} aria-label={`グループ ${group.name}`}>
-          <h3>{group.name}</h3>
-          <BatchControls
-            scope={{ type: 'group', id: group.id }}
-            targets={servers}
-            names={serverNames}
-          />
-        </section>
-      ))}
+
       {loaderData.servers.length === 0 ? (
-        <p>サーバーが登録されていません。</p>
+        <div className="rounded-card border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
+          <p className="text-sm text-ink-muted">
+            サーバーが登録されていません。
+          </p>
+        </div>
       ) : (
-        <ul>
-          {loaderData.servers.map((server) => (
-            <ServerRow
-              key={server.id}
-              server={server}
-              state={states[server.id] ?? 'unknown'}
-              groupNames={server.groups.map(
-                (groupId) => groupNames.get(groupId) ?? groupId,
-              )}
+        <>
+          <section
+            aria-label="全台一括"
+            className="rounded-card border border-line bg-surface p-6 shadow-card sm:p-7"
+          >
+            <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
+              <h3 className="text-base font-semibold tracking-tight text-ink">
+                すべてのサーバー
+              </h3>
+              <p className="text-xs text-ink-subtle">
+                {loaderData.servers.length} 台をまとめて操作
+              </p>
+            </div>
+            <BatchControls
+              scope={{ type: 'all' }}
+              targets={loaderData.servers}
+              names={serverNames}
             />
-          ))}
-        </ul>
+          </section>
+
+          {groupsWithServers.length === 0 ? null : (
+            <section aria-label="グループ一括" className="space-y-4">
+              <h2 className="text-lg font-semibold tracking-tight text-ink">
+                グループ
+              </h2>
+              <div className="grid gap-4 md:grid-cols-2">
+                {groupsWithServers.map(({ group, servers }) => (
+                  <section
+                    key={group.id}
+                    aria-label={`グループ ${group.name}`}
+                    className="rounded-card border border-line bg-surface p-6 shadow-card"
+                  >
+                    <div className="mb-4 flex flex-col gap-1">
+                      <h3 className="text-base font-semibold tracking-tight text-ink">
+                        {group.name}
+                      </h3>
+                      <p className="text-xs text-ink-subtle">
+                        {servers.length} 台
+                      </p>
+                    </div>
+                    <BatchControls
+                      scope={{ type: 'group', id: group.id }}
+                      targets={servers}
+                      names={serverNames}
+                    />
+                  </section>
+                ))}
+              </div>
+            </section>
+          )}
+
+          <section aria-label="サーバー" className="space-y-4">
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
+              <h2 className="text-lg font-semibold tracking-tight text-ink">
+                サーバー
+              </h2>
+              <p className="text-xs text-ink-subtle">状態と個別の起動・停止</p>
+            </div>
+            <ul className="space-y-3">
+              {loaderData.servers.map((server) => (
+                <ServerRow
+                  key={server.id}
+                  server={server}
+                  state={states[server.id] ?? 'unknown'}
+                  groupNames={server.groups.map(
+                    (groupId) => groupNames.get(groupId) ?? groupId,
+                  )}
+                />
+              ))}
+            </ul>
+          </section>
+        </>
       )}
-      <h2>最近の実行</h2>
-      {recent.length === 0 ? (
-        <p>まだ実行はありません。</p>
-      ) : (
-        <ul>
-          {recent.map((record) => (
-            // 同一対象を同一ミリ秒に複数操作しても衝突しない連番で識別する。
-            <RecentRow key={record.seq} record={record} />
-          ))}
-        </ul>
-      )}
-    </section>
+
+      <section aria-label="最近の実行" className="space-y-4">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
+          <h2 className="text-lg font-semibold tracking-tight text-ink">
+            最近の実行
+          </h2>
+          <p className="text-xs text-ink-subtle">直近 100 件</p>
+        </div>
+        {recent.length === 0 ? (
+          <div className="rounded-card border border-dashed border-line-strong bg-surface px-6 py-10 text-center">
+            <p className="text-sm text-ink-muted">まだ実行はありません。</p>
+          </div>
+        ) : (
+          <ul className="rounded-card border border-line bg-surface px-6 py-2 shadow-card">
+            {recent.map((record) => (
+              // 同一対象を同一ミリ秒に複数操作しても衝突しない連番で識別する。
+              <RecentRow key={record.seq} record={record} />
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
   );
 }

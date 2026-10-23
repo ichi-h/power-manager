@@ -48,7 +48,11 @@ export function resolveEnvFilePath(
 export type EnvFileLoadResult =
   | { readonly status: 'loaded'; readonly path: string }
   | { readonly status: 'missing'; readonly path: string }
-  | { readonly status: 'rejected'; readonly path: string; readonly code: string };
+  | {
+      readonly status: 'rejected';
+      readonly path: string;
+      readonly code: string;
+    };
 
 /**
  * 環境変数ファイルを読む。

@@ -120,38 +120,73 @@ export default function Confirm({ loaderData }: Route.ComponentProps) {
       : loaderData.targets.map((target) => target.id).join(',');
 
   return (
-    <section>
-      <h2>停止の確認</h2>
-      {/* 対象の表示名を列挙する（FR-11, SEC-07）。 */}
-      <p>次のサーバーを停止します。よろしいですか。</p>
-      <ul>
-        {names.map((name) => (
-          <li key={name}>{name}</li>
-        ))}
-      </ul>
-      <Form method="post" action="/">
-        <input type="hidden" name="intent" value={loaderData.intent} />
-        {loaderData.kind === 'server' ? (
-          <input type="hidden" name="target" value={loaderData.target.id} />
-        ) : (
-          <>
-            <input
-              type="hidden"
-              name="scopeKind"
-              value={loaderData.scope.type === 'all' ? 'all' : 'group'}
-            />
-            {loaderData.scope.type === 'group' ? (
-              <input type="hidden" name="scopeId" value={loaderData.scope.id} />
-            ) : null}
-          </>
-        )}
-        {/* 確認した対象を送り、action 側で確定した集合と照合させる（SEC-07）。 */}
-        <input type="hidden" name="confirmed" value={confirmed} />
-        <button type="submit" name="confirmedIntent" value={CONFIRM_INTENT}>
-          停止する
-        </button>
-      </Form>
-      <Link to="/">取り消す</Link>
-    </section>
+    <div className="mx-auto w-full max-w-xl py-8">
+      <div className="rounded-card border border-line bg-surface p-8 shadow-raised sm:p-10">
+        <p className="text-xs font-semibold tracking-[0.18em] text-ink-subtle uppercase">
+          Confirm
+        </p>
+        <h2 className="mt-4 text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
+          停止の確認
+        </h2>
+        {/* 対象の表示名を列挙する（FR-11, SEC-07）。 */}
+        <p className="mt-3 text-sm leading-relaxed text-ink-muted">
+          次のサーバーを停止します。よろしいですか。
+        </p>
+        <ul className="mt-5 max-h-64 space-y-1 overflow-y-auto rounded-xl bg-subtle px-4 py-3">
+          {names.map((name) => (
+            <li key={name} className="text-sm font-medium text-ink">
+              {name}
+            </li>
+          ))}
+        </ul>
+        <Form method="post" action="/">
+          <input type="hidden" name="intent" value={loaderData.intent} />
+          {loaderData.kind === 'server' ? (
+            <input type="hidden" name="target" value={loaderData.target.id} />
+          ) : (
+            <>
+              <input
+                type="hidden"
+                name="scopeKind"
+                value={loaderData.scope.type === 'all' ? 'all' : 'group'}
+              />
+              {loaderData.scope.type === 'group' ? (
+                <input
+                  type="hidden"
+                  name="scopeId"
+                  value={loaderData.scope.id}
+                />
+              ) : null}
+            </>
+          )}
+          {/* 確認した対象を送り、action 側で確定した集合と照合させる（SEC-07）。 */}
+          <input type="hidden" name="confirmed" value={confirmed} />
+          <div className="mt-8 flex flex-wrap items-center gap-3">
+            <button
+              type="submit"
+              name="confirmedIntent"
+              value={CONFIRM_INTENT}
+              className={[
+                'rounded-full bg-ink px-6 py-2.5 text-sm font-semibold text-canvas',
+                'transition-opacity duration-150 hover:opacity-85',
+                'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+              ].join(' ')}
+            >
+              停止する
+            </button>
+            <Link
+              to="/"
+              className={[
+                'rounded-full px-5 py-2.5 text-sm font-medium text-ink-muted',
+                'transition-colors duration-150 hover:bg-subtle hover:text-ink',
+                'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+              ].join(' ')}
+            >
+              取り消す
+            </Link>
+          </div>
+        </Form>
+      </div>
+    </div>
   );
 }

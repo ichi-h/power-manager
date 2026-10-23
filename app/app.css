@@ -1,21 +1,89 @@
 @import "tailwindcss";
 
 /**
- * 既定の配色とフォント。明暗の切り替えは CSS のシステム色
- * （Canvas / CanvasText）に委ね、`color-scheme` で追従させる。
+ * デザイントークン。
+ *
+ * 白・黒・グレーを基調に、アクセントは 1 色（インディゴ）だけを使う。値を直接
+ * ユーティリティへ埋め込まず、`--pm-*` を経由させているのは、ダークモードで同じ
+ * 意味のトークンだけを差し替えるためである。明暗は `prefers-color-scheme` に追従する。
  */
-@theme {
-  --font-sans: system-ui, sans-serif;
-  --color-canvas: Canvas;
-  --color-canvas-text: CanvasText;
-}
-
 @layer base {
   :root {
     color-scheme: light dark;
+
+    --pm-canvas: #f6f7f9;
+    --pm-surface: #ffffff;
+    --pm-subtle: #f1f2f5;
+    --pm-line: #e7e9ee;
+    --pm-line-strong: #d7dae1;
+    --pm-ink: #101216;
+    --pm-ink-muted: #5b616d;
+    --pm-ink-subtle: #8b919c;
+    --pm-accent: #4f46e5;
+    --pm-accent-hover: #4338ca;
+    --pm-accent-soft: #eef0ff;
+    --pm-accent-ink: #ffffff;
+    --pm-shadow:
+      0 1px 2px rgb(16 18 22 / 0.04), 0 16px 40px -24px rgb(16 18 22 / 0.24);
+    --pm-shadow-raised:
+      0 1px 2px rgb(16 18 22 / 0.05), 0 24px 48px -24px rgb(16 18 22 / 0.32);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --pm-canvas: #0b0c0f;
+      --pm-surface: #131519;
+      --pm-subtle: #191b21;
+      --pm-line: #23262d;
+      --pm-line-strong: #30343d;
+      --pm-ink: #f4f5f7;
+      --pm-ink-muted: #a3a9b5;
+      --pm-ink-subtle: #767d8a;
+      --pm-accent: #8b93ff;
+      --pm-accent-hover: #a5abff;
+      --pm-accent-soft: #1d2040;
+      --pm-accent-ink: #0b0c0f;
+      --pm-shadow:
+        0 1px 2px rgb(0 0 0 / 0.4), 0 16px 40px -24px rgb(0 0 0 / 0.8);
+      --pm-shadow-raised:
+        0 1px 2px rgb(0 0 0 / 0.5), 0 24px 48px -24px rgb(0 0 0 / 0.9);
+    }
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
   }
 
   body {
-    @apply bg-canvas font-sans text-canvas-text leading-relaxed;
+    @apply bg-canvas font-sans text-ink antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
+
+  ::selection {
+    @apply bg-accent-soft text-ink;
+  }
+}
+
+@theme inline {
+  --font-sans:
+    "Inter", "Hiragino Sans", "Noto Sans JP", ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", sans-serif;
+
+  --color-canvas: var(--pm-canvas);
+  --color-surface: var(--pm-surface);
+  --color-subtle: var(--pm-subtle);
+  --color-line: var(--pm-line);
+  --color-line-strong: var(--pm-line-strong);
+  --color-ink: var(--pm-ink);
+  --color-ink-muted: var(--pm-ink-muted);
+  --color-ink-subtle: var(--pm-ink-subtle);
+  --color-accent: var(--pm-accent);
+  --color-accent-hover: var(--pm-accent-hover);
+  --color-accent-soft: var(--pm-accent-soft);
+  --color-accent-ink: var(--pm-accent-ink);
+
+  --radius-card: 1rem;
+
+  --shadow-card: var(--pm-shadow);
+  --shadow-raised: var(--pm-shadow-raised);
 }

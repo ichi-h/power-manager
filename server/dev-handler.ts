@@ -19,10 +19,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { createRequestListener } from '@react-router/node';
 
 /** 応答を書き終えたかどうかの判定に使う最小限の形。 */
-type ResponseLike = Pick<
-  ServerResponse,
-  'headersSent' | 'writeHead' | 'end'
->;
+type ResponseLike = Pick<ServerResponse, 'headersSent' | 'writeHead' | 'end'>;
 
 /**
  * Vite のミドルウェア（connect 互換）。

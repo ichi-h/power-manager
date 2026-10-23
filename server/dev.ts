@@ -167,9 +167,7 @@ handleRequest = createDevRequestHandler({
   }),
   logFailure: logRequestFailure,
 });
-console.log(
-  JSON.stringify({ event: 'dev_server', url: runtime.publicOrigin }),
-);
+console.log(JSON.stringify({ event: 'dev_server', url: runtime.publicOrigin }));
 
 let shuttingDown = false;
 

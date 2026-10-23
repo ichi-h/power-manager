@@ -96,7 +96,9 @@ describe('環境変数ファイルの読み込み', () => {
 
   test('読めないファイルは rejected にして例外を投げない', () => {
     const path = join(directory, testEnvFileName);
-    writeFileSync(path, 'POWER_MANAGER_TEST_VALUE=from-file\n', { mode: 0o000 });
+    writeFileSync(path, 'POWER_MANAGER_TEST_VALUE=from-file\n', {
+      mode: 0o000,
+    });
 
     const result = loadEnvironmentFile({ POWER_MANAGER_ENV_FILE: path });
 

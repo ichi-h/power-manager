@@ -365,19 +365,42 @@ function ReloadControls({
       : null;
 
   return (
-    <div>
+    <div className="flex flex-wrap items-center gap-3">
       <fetcher.Form method="post">
         <input type="hidden" name="intent" value="reload" />
-        <button type="submit" disabled={running}>
+        <button
+          type="submit"
+          disabled={running}
+          className={[
+            'rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-accent-ink',
+            'transition-colors duration-150 hover:bg-accent-hover',
+            'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+            'disabled:cursor-not-allowed disabled:opacity-40',
+          ].join(' ')}
+        >
           定義を再読込
         </button>
       </fetcher.Form>
-      {running ? <span role="status">再読込中</span> : null}
+      {running ? (
+        <span role="status" className="text-xs font-medium text-ink-muted">
+          再読込中
+        </span>
+      ) : null}
       {running || payload === null ? null : payload.result === 'succeeded' ? (
         // 結果種別だけを表示する（FR-07）。予約の件数など対象の詳細は出さない。
-        <span role="status">再読込: 成功</span>
+        <span
+          role="status"
+          className="inline-flex items-center rounded-full bg-subtle px-3 py-1 text-xs font-medium text-ink-muted"
+        >
+          再読込: 成功
+        </span>
       ) : (
-        <span role="status">再読込: 失敗</span>
+        <span
+          role="status"
+          className="inline-flex items-center rounded-full bg-subtle px-3 py-1 text-xs font-medium text-ink"
+        >
+          再読込: 失敗
+        </span>
       )}
     </div>
   );
@@ -385,72 +408,158 @@ function ReloadControls({
 
 export default function Settings({ loaderData }: Route.ComponentProps) {
   return (
-    <section>
-      <h2>設定</h2>
-      <p>
-        定義ファイル: <code>{loaderData.configPath}</code>
-      </p>
-      <p>
-        定義はこの画面からは変更できません。ファイルを編集してから再読込してください。
-      </p>
-      <ReloadControls reloadResult={loaderData.reloadResult} />
+    <div className="space-y-12">
+      <header className="flex flex-col gap-4">
+        <p className="text-xs font-semibold tracking-[0.18em] text-ink-subtle uppercase">
+          Configuration
+        </p>
+        <h2 className="text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
+          設定
+        </h2>
+      </header>
 
-      <h3>サーバー</h3>
-      {loaderData.servers.length === 0 ? (
-        <p>サーバーが登録されていません。</p>
-      ) : (
-        <ul>
-          {loaderData.servers.map((server) => (
-            <li key={server.id}>
-              <span>{server.name}</span>
-              <span>ID: {server.id}</span>
-              <span>
-                所属グループ:{' '}
-                {server.groups.length === 0 ? 'なし' : server.groups.join('、')}
-              </span>
-              <span>
-                接続先: {server.host}:{server.port}
-              </span>
-              <span>MAC アドレス: {server.macAddress}</span>
-              <span>
-                WOL: {server.broadcastAddress}:{server.wolPort}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
+      <section
+        aria-label="定義ファイル"
+        className="rounded-card border border-line bg-surface p-6 shadow-card sm:p-7"
+      >
+        <h3 className="text-base font-semibold tracking-tight text-ink">
+          定義ファイル
+        </h3>
+        <p className="mt-3 overflow-x-auto rounded-xl bg-subtle px-4 py-3 font-mono text-xs text-ink-muted">
+          {loaderData.configPath}
+        </p>
+        <p className="mt-3 text-sm leading-relaxed text-ink-muted">
+          定義はこの画面からは変更できません。ファイルを編集してから再読込してください。
+        </p>
+        <div className="mt-5">
+          <ReloadControls reloadResult={loaderData.reloadResult} />
+        </div>
+      </section>
 
-      <h3>グループ</h3>
-      {loaderData.groups.length === 0 ? (
-        <p>グループが登録されていません。</p>
-      ) : (
-        <ul>
-          {loaderData.groups.map((group) => (
-            <li key={group.id}>
-              <span>{group.name}</span>
-              <span>ID: {group.id}</span>
-            </li>
-          ))}
-        </ul>
-      )}
+      <section aria-label="サーバー" className="space-y-4">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
+          <h3 className="text-lg font-semibold tracking-tight text-ink">
+            サーバー
+          </h3>
+          <p className="text-xs text-ink-subtle">
+            {loaderData.servers.length} 台
+          </p>
+        </div>
+        {loaderData.servers.length === 0 ? (
+          <div className="rounded-card border border-dashed border-line-strong bg-surface px-6 py-10 text-center">
+            <p className="text-sm text-ink-muted">
+              サーバーが登録されていません。
+            </p>
+          </div>
+        ) : (
+          <ul className="grid gap-4 md:grid-cols-2">
+            {loaderData.servers.map((server) => (
+              <li
+                key={server.id}
+                className="rounded-card border border-line bg-surface p-6 shadow-card"
+              >
+                <p className="text-base font-semibold tracking-tight text-ink">
+                  {server.name}
+                </p>
+                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="text-xs font-medium text-ink-subtle">
+                    ID: {server.id}
+                  </span>
+                  <span className="text-xs font-medium text-ink-subtle">
+                    所属グループ:{' '}
+                    {server.groups.length === 0
+                      ? 'なし'
+                      : server.groups.join('、')}
+                  </span>
+                  <span className="font-mono text-xs font-medium text-ink-subtle">
+                    接続先: {server.host}:{server.port}
+                  </span>
+                  <span className="font-mono text-xs font-medium text-ink-subtle">
+                    MAC アドレス: {server.macAddress}
+                  </span>
+                  <span className="font-mono text-xs font-medium text-ink-subtle">
+                    WOL: {server.broadcastAddress}:{server.wolPort}
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
-      <h3>予約</h3>
-      {loaderData.schedules.length === 0 ? (
-        <p>予約が登録されていません。</p>
-      ) : (
-        <ul>
-          {loaderData.schedules.map((schedule) => (
-            <li key={schedule.id}>
-              <span>{schedule.name}</span>
-              <span>ID: {schedule.id}</span>
-              <span>{schedule.enabled ? '有効' : '無効'}</span>
-              <span>対象: {schedule.target}</span>
-              <span>操作: {schedule.operation}</span>
-              <span>{schedule.repeat}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+      <section aria-label="グループ" className="space-y-4">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
+          <h3 className="text-lg font-semibold tracking-tight text-ink">
+            グループ
+          </h3>
+          <p className="text-xs text-ink-subtle">
+            {loaderData.groups.length} 件
+          </p>
+        </div>
+        {loaderData.groups.length === 0 ? (
+          <div className="rounded-card border border-dashed border-line-strong bg-surface px-6 py-10 text-center">
+            <p className="text-sm text-ink-muted">
+              グループが登録されていません。
+            </p>
+          </div>
+        ) : (
+          <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {loaderData.groups.map((group) => (
+              <li
+                key={group.id}
+                className="rounded-card border border-line bg-surface px-5 py-4 shadow-card"
+              >
+                <p className="text-sm font-semibold text-ink">{group.name}</p>
+                <p className="mt-1 text-xs font-medium text-ink-subtle">
+                  ID: {group.id}
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section aria-label="予約" className="space-y-4">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
+          <h3 className="text-lg font-semibold tracking-tight text-ink">
+            予約
+          </h3>
+          <p className="text-xs text-ink-subtle">
+            {loaderData.schedules.length} 件
+          </p>
+        </div>
+        {loaderData.schedules.length === 0 ? (
+          <div className="rounded-card border border-dashed border-line-strong bg-surface px-6 py-10 text-center">
+            <p className="text-sm text-ink-muted">予約が登録されていません。</p>
+          </div>
+        ) : (
+          <ul className="rounded-card border border-line bg-surface shadow-card">
+            {loaderData.schedules.map((schedule) => (
+              <li
+                key={schedule.id}
+                className="flex flex-col gap-2 border-line/70 border-b px-6 py-4 last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:gap-8"
+              >
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="truncate text-sm font-semibold text-ink">
+                    {schedule.name}
+                  </span>
+                  <span className="shrink-0 rounded-full bg-subtle px-2.5 py-0.5 text-xs font-medium text-ink-subtle">
+                    {schedule.enabled ? '有効' : '無効'}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-muted">
+                  <span className="text-ink-subtle">ID: {schedule.id}</span>
+                  <span>対象: {schedule.target}</span>
+                  <span>操作: {schedule.operation}</span>
+                  <span className="font-mono text-ink-subtle tabular-nums">
+                    {schedule.repeat}
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
   );
 }
