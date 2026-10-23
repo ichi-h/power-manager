@@ -4,7 +4,8 @@
  * `power_operation` / `schedule_run` / `schedule_skip` / `config_reload` の 1 行
  * 1 JSON を標準出力へ出す。`started` / `startup_failed` / `shutdown` /
  * `request_failed` はそれぞれ `server/index.ts` / `server/startup.ts` /
- * `server/log.ts` が出すため、ここでは扱わない。
+ * `server/log.ts` が出すため、ここでは扱わない。`config_reload` は設定の再読込
+ * （`app/routes/settings.tsx` の action）が出す。
  *
  * 秘密情報（パスワード・ハッシュ・秘密鍵・停止コマンドの内容）は出さない（SEC-05）。
  * このモジュールが出すのは「設定に含まれる値」ではなく、対象 ID・操作種別・成否・
@@ -40,6 +41,37 @@ export function logPowerOperation(
         ? {}
         : { scheduleId: record.scheduleId }),
       ...(record.group === undefined ? {} : { group: record.group }),
+    }),
+  );
+}
+
+/**
+ * 設定の再読込の結果を 1 行 JSON で標準出力へ出す（FR-08, NFR-13）。
+ *
+ * 画面には結果種別しか出さないため、失敗理由はここにだけ残す（FR-07, SEC-05）。
+ * `reason` は例外メッセージや検証の指摘（`servers.0.macAddress: ...` の形）であり、
+ * 設定値そのもの（MAC アドレス・ホスト名・停止コマンド）は含まれない。
+ *
+ * `schedules` は差し替え後の定義から再計算した予約の件数である。予約実行器が無い
+ * （production 以外）ときは再計算しないため省略する。
+ */
+export function logConfigReload(
+  result: 'succeeded' | 'failed',
+  options: {
+    readonly reason?: string;
+    readonly schedules?: number;
+  } = {},
+): void {
+  console.log(
+    JSON.stringify({
+      event: 'config_reload',
+      result,
+      ...(options.reason === undefined
+        ? {}
+        : { reason: options.reason.slice(0, 200) }),
+      ...(options.schedules === undefined
+        ? {}
+        : { schedules: options.schedules }),
     }),
   );
 }

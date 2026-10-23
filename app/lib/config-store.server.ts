@@ -45,6 +45,9 @@ export type ConfigStore = {
   /**
    * ファイルを読み直し、全体検証に成功したときだけ有効設定を差し替える。
    * 失敗時は旧設定を維持し、理由を返す。
+   *
+   * 複数の再読込が重なった場合は到着順に直列化し、後から始まった要求が必ず後で
+   * 読み込む（古い内容が新しい内容を上書きしない）。
    */
   reload(): Promise<ReloadResult>;
 };
@@ -127,29 +130,55 @@ export function createConfigStore(
 ): ConfigStore {
   let active: ManagedConfig = initial;
 
+  /**
+   * 直列化用の待ち行列の末尾。
+   *
+   * 再読込は「読込み → 検証 → 差し替え」の間に `await` を挟むため、2 本が同時に走ると
+   * 先に読み込んだ古い内容が後に完了して新しい内容を上書きし得る。画面からの要求は
+   * 通常 1 本だが、複数タブや二重送信で重なり得るため、到着順に 1 本ずつ処理する。
+   * 待ち行列は処理が終わった時点で `null` に戻し、待ち手がいなければ何も保持しない。
+   */
+  let queue: Promise<unknown> | null = null;
+
+  const runReload = async (): Promise<ReloadResult> => {
+    let candidate: ManagedConfig;
+    try {
+      candidate = await load(configPath);
+    } catch (error) {
+      const issues =
+        error instanceof ManagedConfigError
+          ? error.issues
+          : ['設定を読み込めませんでした'];
+      return {
+        ok: false,
+        reason: error instanceof Error ? error.message : String(error),
+        issues,
+      };
+    }
+
+    // ここに到達した候補は全体検証を通過している。差し替えは 1 つの代入で完結するため、
+    // 参照側から「一部だけ新しい定義」が見える状態は存在しない。
+    active = candidate;
+    return { ok: true, config: candidate };
+  };
+
   return {
     current: () => active,
 
-    async reload(): Promise<ReloadResult> {
-      let candidate: ManagedConfig;
-      try {
-        candidate = await load(configPath);
-      } catch (error) {
-        const issues =
-          error instanceof ManagedConfigError
-            ? error.issues
-            : ['設定を読み込めませんでした'];
-        return {
-          ok: false,
-          reason: error instanceof Error ? error.message : String(error),
-          issues,
-        };
-      }
-
-      // ここに到達した候補は全体検証を通過している。差し替えは 1 つの代入で完結するため、
-      // 参照側から「一部だけ新しい定義」が見える状態は存在しない。
-      active = candidate;
-      return { ok: true, config: candidate };
+    reload(): Promise<ReloadResult> {
+      const previous = queue ?? Promise.resolve();
+      // 失敗を待ち行列に伝播させない（次の再読込は必ず実行する）。
+      const next = previous.then(runReload, runReload);
+      const tail = next.then(
+        () => undefined,
+        () => undefined,
+      );
+      queue = tail;
+      // 待っている要求が無くなったら参照を手放す（モジュール寿命まで鎖を伸ばさない）。
+      void tail.then(() => {
+        if (queue === tail) queue = null;
+      });
+      return next;
     },
   };
 }

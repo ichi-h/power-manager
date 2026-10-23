@@ -2,6 +2,7 @@ import type { Route } from './+types/root';
 import {
   Links,
   Meta,
+  NavLink,
   Outlet,
   Scripts,
   ScrollRestoration,
@@ -36,7 +37,13 @@ export default function Root() {
   return (
     <main className="mx-auto max-w-4xl px-4 pt-6 pb-12">
       <header>
-        <h1 className="mb-6 text-2xl font-bold">power-manager</h1>
+        <h1 className="mb-4 text-2xl font-bold">power-manager</h1>
+        <nav className="mb-6 flex gap-4">
+          <NavLink to="/" end>
+            一覧
+          </NavLink>
+          <NavLink to="/settings">設定</NavLink>
+        </nav>
       </header>
       <Outlet />
     </main>
