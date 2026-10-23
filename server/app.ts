@@ -36,6 +36,10 @@ import {
 } from '../app/lib/power.server.ts';
 import { operatorContext } from '../app/lib/operator-context.server.ts';
 import { statusCheckerContext } from '../app/lib/status-checker-context.ts';
+import {
+  getScheduleRunner,
+  type ScheduleRunner,
+} from '../app/lib/schedule.server.ts';
 import { sshRuntimeContext } from '../app/lib/ssh-runtime-context.server.ts';
 import { logRequestFailure } from './log.ts';
 
@@ -72,6 +76,32 @@ function recordOperation(record: PowerOperationRecord): void {
  * `t008` 以降の loader/action はこの実体を `operatorContext` から参照する。
  */
 const sharedOperator = createPowerOperator({ onRecord: recordOperation });
+
+/**
+ * 予約実行器の共有インスタンス（FR-12）。
+ *
+ * `NODE_ENV !== production` では作らない（テスト・開発で予約が動くと操作を
+ * 取り違えるため）。作成は `getScheduleRunner` の呼び出し時に行い、起動配線は
+ * `createAppListener` で行う。
+ */
+let sharedScheduleRunner: ScheduleRunner | null = null;
+
+/** 予約実行器を（存在しなければ）作って返す。production でしか呼ばれない。 */
+function ensureScheduleRunner(
+  runtime: RuntimeConfig,
+  configStore: ConfigStore,
+): ScheduleRunner {
+  if (sharedScheduleRunner === null) {
+    sharedScheduleRunner = getScheduleRunner(configStore.current(), {
+      operator: sharedOperator,
+      runtime: {
+        sshIdentityFile: runtime.sshIdentityFile,
+        sshKnownHostsFile: runtime.sshKnownHostsFile,
+      },
+    });
+  }
+  return sharedScheduleRunner;
+}
 
 /**
  * loader/action へ渡す load context を組み立てる。
@@ -162,6 +192,11 @@ export function createAppListener(
   runtime: RuntimeConfig,
   configStore: ConfigStore,
 ) {
+  // 予約実行器（FR-12）。production のときだけ起動する。テストや開発では動かさない。
+  if (process.env.NODE_ENV === 'production') {
+    const runner = ensureScheduleRunner(runtime, configStore);
+    runner.start();
+  }
   return createRequestListener({
     build: () => loadServerBuild(runtime),
     // 明示しないと `develop` 扱いになり、開発用の挙動が残る（SEC-05）。
