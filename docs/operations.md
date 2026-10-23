@@ -314,47 +314,54 @@ nix build .#default
 
 `configFile` を指定した場合、モジュールは `Environment=POWER_MANAGER_CONFIG_PATH=<configFile>` を設定する。指定しない場合、`environmentFile` 側の値を使う。
 
+`configFile` を `/home` 配下に指定すると評価時に失敗する（`ProtectHome = true` でサービスから見えないため）。これは `assertions` で検出するので、`nixos-rebuild switch` の前に気付ける。`environmentFile` 内の SSH 秘密鍵・`known_hosts` のパスはモジュールからは参照できないため、5.3 の責務として利用側で守る。
+
 ### 5.2 サービス定義
 
 ```nix
-serviceConfig = {
-  ExecStart = "${cfg.package}/bin/power-manager";
-  EnvironmentFile = cfg.environmentFile;
-  Environment = lib.optional (cfg.configFile != null)
-    "POWER_MANAGER_CONFIG_PATH=${cfg.configFile}";
-  User = "power-manager";
-  Group = "power-manager";
-  Restart = "on-failure";
-  RestartPreventExitStatus = [ 78 ];
+systemd.services.power-manager = {
+  path = [ pkgs.openssh ];   # environment.PATH を直接書かない
 
-  UMask = "0077";
+  serviceConfig = {
+    ExecStart = "${cfg.package}/bin/power-manager";
+    EnvironmentFile = cfg.environmentFile;
+    Environment = lib.optional (cfg.configFile != null)
+      "POWER_MANAGER_CONFIG_PATH=${cfg.configFile}";
+    User = "power-manager";
+    Group = "power-manager";
+    Restart = "on-failure";
+    RestartPreventExitStatus = [ 78 ];
 
-  NoNewPrivileges = true;
-  CapabilityBoundingSet = "";
-  AmbientCapabilities = "";
+    UMask = "0077";
 
-  PrivateTmp = true;
-  PrivateDevices = true;
+    NoNewPrivileges = true;
+    CapabilityBoundingSet = "";
+    AmbientCapabilities = "";
 
-  ProtectSystem = "strict";
-  ProtectHome = true;
-  ProtectControlGroups = true;
-  ProtectKernelModules = true;
-  ProtectKernelTunables = true;
-  ProtectKernelLogs = true;
-  ProtectClock = true;
-  ProtectHostname = true;
+    PrivateTmp = true;
+    PrivateDevices = true;
 
-  LockPersonality = true;
-  RestrictSUIDSGID = true;
-  RestrictRealtime = true;
-  RestrictNamespaces = true;
-  SystemCallArchitectures = "native";
+    ProtectSystem = "strict";
+    ProtectHome = true;
+    ProtectControlGroups = true;
+    ProtectKernelModules = true;
+    ProtectKernelTunables = true;
+    ProtectKernelLogs = true;
+    ProtectClock = true;
+    ProtectHostname = true;
 
-  RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+    LockPersonality = true;
+    RestrictSUIDSGID = true;
+    RestrictRealtime = true;
+    RestrictNamespaces = true;
+    SystemCallArchitectures = "native";
+
+    RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+  };
 };
 ```
 
+- OpenSSH は `serviceConfig.Environment` ではなく `systemd.services.<name>.path` に置く。NixOS は `path` を既定の `PATH`（coreutils・findutils・gnugrep・gnused・systemd）の後ろへ連結するが、`environment.PATH` を直接定義すると既定値と衝突し、評価が `conflicting definition values` で失敗する。
 - `ProtectHome = true` のため、設定 JSON・SSH 秘密鍵・`known_hosts` を `/home` 配下に置かない。`/etc/power-manager` や `/run/secrets` などに置く。
 - `AF_UNIX` は DNS リゾルバや journald などのローカルソケット用、`AF_INET` と `AF_INET6` は HTTP 待受、WOL、SSH、TCP 死活確認用である。
 - `PrivateNetwork`、`IPAddressDeny`、`SocketBindDeny` は設定しない（loopback 待受と可変宛先への外向き通信が必要なため）。
