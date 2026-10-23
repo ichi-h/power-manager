@@ -57,6 +57,19 @@ buildNpmPackage {
     # バンドルは依存パッケージを external のまま残すため、本番依存だけを
     # 同梱した node_modules を置く。
     npm prune --omit=dev --ignore-scripts
+
+    # `@react-router/node` の `typescript` は optional peer のため prune しても残る。
+    # 実行時には使わないので、コンパイラ本体とプラットフォーム別バイナリを落とす
+    # （`node_modules` の半分以上を占める）。
+    rm -rf node_modules/typescript node_modules/@typescript
+    # 消したパッケージを指す `.bin` のシンボリックリンクが残ると配置物の検査
+    # （noBrokenSymlinks）で落ちるため、行き先を失ったリンクを取り除く。
+    find node_modules/.bin -mindepth 1 -xtype l -delete
+
+    # prune は中身を消したスコープ付きディレクトリ（`@vitest` など）を空のまま残す。
+    # モジュール解決には影響しないが、配置物を汚さないよう空ディレクトリを掃除する。
+    find node_modules -mindepth 1 -type d -empty -delete
+
     cp -r node_modules $out/share/power-manager/node_modules
 
     makeWrapper ${lib.getExe nodejs_24} $out/bin/power-manager \
