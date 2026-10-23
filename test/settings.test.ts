@@ -27,7 +27,7 @@ import {
 import { validEnvironment } from './support/environment.ts';
 import { validManagedConfig, validSchedule } from './support/managed-config.ts';
 
-import { action, loader } from '../app/routes/settings.tsx';
+import { action, headers, loader } from '../app/routes/settings.tsx';
 
 /** テストで使う定義ファイルのパス。実際には読み書きしない（`load` を差し替える）。 */
 const configPath = '/etc/power-manager/config.json';
@@ -187,7 +187,7 @@ describe('設定画面の loader', () => {
         name: '夜間停止',
         enabled: true,
         operation: '停止',
-        target: 'グループ ストレージ',
+        target: 'グループ storage',
         repeat: '毎日 23:30',
       },
       {
@@ -229,6 +229,13 @@ describe('設定画面の loader', () => {
     expect(data.servers).toEqual([]);
     expect(data.groups).toEqual([]);
     expect(data.schedules).toEqual([]);
+  });
+});
+
+describe('設定画面の応答ヘッダ', () => {
+  test('loader の応答はキャッシュを許さない（SEC-05, bd05）', () => {
+    const response = new Response(null, { headers: headers({ loaderHeaders: new Headers(), parentHeaders: new Headers(), actionHeaders: new Headers(), errorHeaders: undefined }) });
+    expect(response.headers.get('cache-control')).toBe('no-store');
   });
 });
 

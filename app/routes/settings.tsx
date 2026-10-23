@@ -17,6 +17,7 @@ import type { Route } from './+types/settings';
 import { requireRuntimeConfig } from '../lib/config.server.ts';
 import { requireConfigStore } from '../lib/config-store.server.ts';
 import type { ManagedConfig, Repeat } from '../lib/model.ts';
+import { ManagedConfigError } from '../lib/runtime-config.server.ts';
 import { logConfigReload } from '../lib/power-log.server.ts';
 import { requireScheduleRunner } from '../lib/schedule-runner-context.server.ts';
 
@@ -72,6 +73,17 @@ export function loader({ context }: Route.LoaderArgs): SettingsLoaderData {
   };
 }
 
+/**
+ * loader の応答はキャッシュを許さない。
+ *
+ * 応答には定義ファイルのパス・MAC アドレス・ssh の接続先など、認証済みの要求にだけ
+ * 見せる値が載る（SEC-05, FR-10）。定義は再読込のたびに差し替わるため、キャッシュに
+ * 残った古い一覧が見えることも防ぐ。
+ */
+export const headers: Route.HeadersFunction = () => ({
+  'cache-control': 'no-store',
+});
+
 /** action が返す結果。画面に出すのは結果種別だけである（FR-07）。 */
 export type ReloadPayload =
   | { readonly result: 'succeeded'; readonly schedules: number | null }
@@ -80,8 +92,11 @@ export type ReloadPayload =
 /** 応答が `ReloadPayload` の形かどうか（想定外の応答では表示を変えない）。 */
 export function isReloadPayload(value: unknown): value is ReloadPayload {
   if (typeof value !== 'object' || value === null) return false;
-  const result = (value as Partial<ReloadPayload>).result;
-  return result === 'succeeded' || result === 'failed';
+  const candidate = value as Partial<ReloadPayload>;
+  if (candidate.result === 'failed') return true;
+  if (candidate.result !== 'succeeded') return false;
+  // 成功の応答は「計画件数、または実行器が無いことを示す null」に限る（bd05）。
+  return candidate.schedules === null || typeof candidate.schedules === 'number';
 }
 
 /**
@@ -105,7 +120,10 @@ export async function action({ request, context }: Route.ActionArgs) {
   const form = await request.formData();
   if (form.get('intent') !== 'reload') return invalidRequest();
 
+  // 差し替えに必要な値は、状態を変える前にすべて読む。設定ストアの差し替えが済んだ
+  // あとで配線不整合が出ても取り返しが付かないためである（bd05, FR-08）。
   const store = requireConfigStore(context);
+  const runner = requireScheduleRunner(context);
 
   let outcome: ReloadResultLike;
   try {
@@ -113,9 +131,9 @@ export async function action({ request, context }: Route.ActionArgs) {
   } catch (error) {
     // `reload()` は失敗を値で返す契約だが、実装の不具合で例外になった場合も
     // 画面をエラーバウンダリにせず、失敗として扱う（FR-07）。
-    logConfigReload('failed', {
-      reason: error instanceof Error ? error.message : String(error),
-    });
+    // 理由は ManagedConfigError のときだけ message を使い、それ以外は内部の値を
+    // ログへ流さない（SEC-05）。
+    logConfigReload('failed', { reason: reloadFailureReason(error) });
     return jsonResponse({ result: 'failed' } satisfies ReloadPayload);
   }
 
@@ -125,11 +143,17 @@ export async function action({ request, context }: Route.ActionArgs) {
   }
 
   // 成功時のみスケジューラを差し替える。実行中の発火は中断しない（NFR-13）。
-  const runner = requireScheduleRunner(context);
+  // ここで失敗したら、設定ストアは新・スケジューラは旧のまま残る。その不整合を
+  // 「成功」として隠さず、失敗として記録して返す（bd05）。
   let schedules: number | null = null;
   if (runner !== null) {
-    runner.replacePlans(outcome.config);
-    schedules = runner.plans().length;
+    try {
+      runner.replacePlans(outcome.config);
+      schedules = runner.plans().length;
+    } catch (error) {
+      logConfigReload('failed', { reason: reloadFailureReason(error) });
+      return jsonResponse({ result: 'failed' } satisfies ReloadPayload);
+    }
   }
 
   logConfigReload('succeeded', {
@@ -140,6 +164,19 @@ export async function action({ request, context }: Route.ActionArgs) {
     result: 'succeeded',
     schedules,
   } satisfies ReloadPayload);
+}
+
+/**
+ * 再読込の失敗理由をログ用に組み立てる。
+ *
+ * 検証エラー（`ManagedConfigError`）の message は、設定のどの項目が不正かを示す
+ * 運用上必要な情報であるため、そのまま出す。それ以外の例外は内部の値（例外文言に
+ * 含まれる設定値など）をログへ流さないよう、固定文言にする（SEC-05）。
+ */
+function reloadFailureReason(error: unknown): string {
+  return error instanceof ManagedConfigError
+    ? error.message
+    : '設定の再読込に失敗しました';
 }
 
 /**
@@ -180,12 +217,10 @@ function invalidRequest(): Response {
  * `configPath` は秘密ではないが、環境変数の生値は load context に秘密値ごと載せない
  * 方針のため、公開値（`PublicRuntimeConfig`）から取る。
  */
-/** 公開実行時設定から定義ファイルのパスを読む（表示用）。 */
 function requireConfigPath(context: Route.LoaderArgs['context']): string {
   return requireRuntimeConfig(context).configPath;
 }
 
-/** 公開実行時設定を読む。 */
 /** 定義から画面用の行データを作る。定義順をそのまま保つ（FR-01）。 */
 function toSettingsRows(
   config: ManagedConfig,
@@ -216,7 +251,7 @@ function toSettingsRows(
       name: schedule.name,
       enabled: schedule.enabled,
       operation: operationLabels[schedule.operation],
-      target: describeTarget(schedule.target, groupNames),
+      target: describeTarget(schedule.target),
       repeat: describeRepeat(schedule.repeat),
     })),
   };
@@ -225,10 +260,10 @@ function toSettingsRows(
 /** 予約の対象を「サーバー NAS」「グループ ストレージ」の形にする。 */
 function describeTarget(
   target: ManagedConfig['schedules'][number]['target'],
-  groupNames: ReadonlyMap<string, string>,
 ): string {
-  if (target.type === 'server') return `サーバー ${target.id}`;
-  return `グループ ${groupNames.get(target.id) ?? target.id}`;
+  // ID・グループとも ID を出す。一覧画面の「最近の実行」（app/routes/dashboard.tsx）と
+  // 同じ表記に揃える（bd05）。
+  return target.type === 'server' ? `サーバー ${target.id}` : `グループ ${target.id}`;
 }
 
 /** 操作の表示文言。 */
@@ -276,12 +311,8 @@ function ReloadControls() {
       </fetcher.Form>
       {running ? <span role="status">再読込中</span> : null}
       {running || payload === null ? null : payload.result === 'succeeded' ? (
-        <span role="status">
-          再読込: 成功
-          {payload.schedules === null ? null : (
-            <>（予約 {payload.schedules} 件を再計算）</>
-          )}
-        </span>
+        // 結果種別だけを表示する（FR-07）。予約の件数など対象の詳細は出さない。
+        <span role="status">再読込: 成功</span>
       ) : (
         <span role="status">再読込: 失敗</span>
       )}

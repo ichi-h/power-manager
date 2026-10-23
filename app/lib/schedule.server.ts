@@ -432,13 +432,17 @@ export function createScheduleRunner(
    *
    * 本日の実行時刻が既に過ぎている有効な予約は、この後のティックでも実行されない
    * （次回時刻は常に現在より後になる）。その事実をスキップとして記録する（FR-12）。
+   * 記録は初期化（プロセス起動時）の 1 回に限る。再読込（`replacePlans`）は読み取り
+   * 専用の管理操作であるため記録せず、実在しないスキップが履歴に蓄積するのを防ぐ（bd05）。
    */
-  const buildState = (config: ManagedConfig) => {
+  const buildState = (config: ManagedConfig, recordMissed: boolean) => {
     const now = nowFn();
-    for (const schedule of config.schedules) {
-      if (!schedule.enabled) continue;
-      if (passedTodayRun(schedule.repeat, now) !== null) {
-        recordSkip(schedule, deps, 'missed_schedule');
+    if (recordMissed) {
+      for (const schedule of config.schedules) {
+        if (!schedule.enabled) continue;
+        if (passedTodayRun(schedule.repeat, now) !== null) {
+          recordSkip(schedule, deps, 'missed_schedule');
+        }
       }
     }
     return { plans: createSchedulePlans(config, now), config };
@@ -447,7 +451,7 @@ export function createScheduleRunner(
   let state: {
     readonly plans: readonly SchedulePlan[];
     readonly config: ManagedConfig;
-  } = buildState(initialConfig);
+  } = buildState(initialConfig, true);
   let timer: ReturnType<typeof setInterval> | null = null;
   let running = false;
   /** 実行中のティックの数。`stop()` の完了待ちに使う。 */
@@ -531,7 +535,8 @@ export function createScheduleRunner(
     replacePlans(config: ManagedConfig) {
       // 原子的差し替え（j004）。実行中の発火は参照をスナップショット済みであり、
       // 中断しない。差し替え後のティックから新しい計画で動く。
-      state = buildState(config);
+      // missed_schedule は初期化の 1 回だけ記録するため、ここでは記録しない（bd05）。
+      state = buildState(config, false);
     },
     plans() {
       return state.plans;

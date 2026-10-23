@@ -571,6 +571,26 @@ describe('createScheduleRunner（j002, j004, j005）', () => {
     void runner.stop();
   });
 
+  test('replacePlans は missed_schedule を再記録しない（bd05）', () => {
+    const config = configWithSchedules([validSchedule()]);
+    const { deps, records, setNow } = makeDeps();
+    // 作成時点（10:00）では当日分がまだ来ていないため、記録は無い。
+    setNow(jst('2025-06-01T10:00:00'));
+    const runner = createScheduleRunner(config, deps);
+    expect(records).toHaveLength(0);
+    // 23:30 過ぎに再読込しても、実在しないスキップは記録しない。
+    setNow(jst('2025-06-01T23:40:00'));
+    runner.replacePlans(config);
+    runner.replacePlans(config);
+    const skips = records.filter((r) => r.event === 'schedule_skip');
+    expect(skips).toEqual([]);
+    // 次回時刻は翌日へ前進している（当日分の二重実行をしない挙動は保つ）。
+    expect(runner.plans()[0]?.nextRunAt.toISOString()).toBe(
+      '2025-06-02T14:30:00.000Z',
+    );
+    void runner.stop();
+  });
+
   test('start の二重呼び出しでタイマーが重複しない', async () => {
     const { deps } = makeDeps();
     const runner = createScheduleRunner(configWithSchedules([]), deps);

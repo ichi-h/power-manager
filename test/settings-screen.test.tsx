@@ -138,7 +138,8 @@ describe('再読込の進行表示と結果', () => {
     finish({ result: 'succeeded', schedules: 2 });
 
     expect(await screen.findByText(/再読込: 成功/)).toBeDefined();
-    expect(screen.getByText(/予約 2 件を再計算/)).toBeDefined();
+    // 結果種別だけを表示する。件数などの対象の詳細は FR-07 の表示範囲外である（bd05）。
+    expect(screen.queryByText(/再計算/)).toBeNull();
     expect(screen.queryByText('再読込中')).toBeNull();
   });
 
@@ -154,7 +155,7 @@ describe('再読込の進行表示と結果', () => {
     expect(document.body.textContent).not.toContain('検証');
   });
 
-  test('予約実行器が無いときは件数を出さない', async () => {
+  test('予約実行器が無いときも結果種別だけを出す', async () => {
     renderSettings(loaderData(), {
       action: () => ({ result: 'succeeded', schedules: null }),
     });
