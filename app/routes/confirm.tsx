@@ -45,7 +45,10 @@ export type ConfirmLoaderData =
  * 変わる（利用者が見る前に古い集合を確定させない）。定義に無い対象は確認できないため、
  * 一覧画面へ戻す。
  */
-export function loader({ context, request }: Route.LoaderArgs): ConfirmLoaderData {
+export function loader({
+  context,
+  request,
+}: Route.LoaderArgs): ConfirmLoaderData {
   const config = requireConfigStore(context).current();
   const params = new URL(request.url).searchParams;
   const kind = params.get('kind');
@@ -138,11 +141,7 @@ export default function Confirm({ loaderData }: Route.ComponentProps) {
               value={loaderData.scope.type === 'all' ? 'all' : 'group'}
             />
             {loaderData.scope.type === 'group' ? (
-              <input
-                type="hidden"
-                name="scopeId"
-                value={loaderData.scope.id}
-              />
+              <input type="hidden" name="scopeId" value={loaderData.scope.id} />
             ) : null}
           </>
         )}

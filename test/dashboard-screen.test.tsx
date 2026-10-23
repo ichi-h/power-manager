@@ -594,7 +594,8 @@ describe('一括操作', () => {
     renderDashboard(loaderData(), {
       action: () => ({
         error: 'targets_changed' as const,
-        message: '対象が変わりました。画面を再読み込みしてから操作し直してください。',
+        message:
+          '対象が変わりました。画面を再読み込みしてから操作し直してください。',
       }),
     });
 

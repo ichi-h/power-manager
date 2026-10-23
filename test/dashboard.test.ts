@@ -961,8 +961,20 @@ describe('一括操作の action', () => {
         keys: ['kind', 'operation', 'resultKind', 'target'],
       },
       {
-        fields: { intent: 'wake-group', scopeKind: 'group', scopeId: 'storage' },
-        keys: ['kind', 'operation', 'scopeKind', 'scopeId', 'summary', 'count', 'item'],
+        fields: {
+          intent: 'wake-group',
+          scopeKind: 'group',
+          scopeId: 'storage',
+        },
+        keys: [
+          'kind',
+          'operation',
+          'scopeKind',
+          'scopeId',
+          'summary',
+          'count',
+          'item',
+        ],
       },
       {
         // 不正な要求は理由だけを運ぶ。
@@ -1016,7 +1028,12 @@ describe('一括操作の action', () => {
       operation: 'shutdown',
       scope: { type: 'group', id: 'storage' },
       results: [
-        { target: 'nas', operation: 'shutdown', result: 'succeeded', code: null },
+        {
+          target: 'nas',
+          operation: 'shutdown',
+          result: 'succeeded',
+          code: null,
+        },
         {
           target: 'test-01',
           operation: 'shutdown',
@@ -1024,7 +1041,12 @@ describe('一括操作の action', () => {
           code: 'operation_failed',
         },
         // 区切り文字を含む対象 ID も、右から区切ることで復元できる。
-        { target: 'x:y', operation: 'shutdown', result: 'skipped', code: 'busy' },
+        {
+          target: 'x:y',
+          operation: 'shutdown',
+          result: 'skipped',
+          code: 'busy',
+        },
       ],
       summary: { ok: 1, failed: 1, skipped: 1 },
     });
