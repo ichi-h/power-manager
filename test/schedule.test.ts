@@ -452,7 +452,10 @@ describe('createScheduleRunner（j002, j004, j005）', () => {
         },
       ],
       schedules: [
-        { ...validSchedule({ id: 'a' }), target: { type: 'server', id: 'nas' } },
+        {
+          ...validSchedule({ id: 'a' }),
+          target: { type: 'server', id: 'nas' },
+        },
         {
           ...validSchedule({ id: 'b' }),
           target: { type: 'server', id: 'nas2' },

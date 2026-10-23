@@ -397,10 +397,7 @@ export type ScheduleRunner = {
  * 実行されない（FR-12）。その事実を黙って捨てず、スキップとして記録するための判定。
  * weekly は本日が指定曜日のときだけ本日の分を持つ。
  */
-function passedTodayRun(
-  repeat: Repeat,
-  now: Date,
-): Date | null {
+function passedTodayRun(repeat: Repeat, now: Date): Date | null {
   const { hour, minute } = parseTime(repeat.time);
   const tokyoDay = Math.floor((now.getTime() + tokyoOffsetMs) / 86_400_000);
   const instant = new Date(
@@ -457,7 +454,6 @@ export function createScheduleRunner(
   let inFlight = 0;
   /** `stop()` の完了待ちを解決する。実行中のティックがなければ即座に解決する。 */
   let quiesced: (() => void) | null = null;
-
 
   const tick = async (): Promise<void> => {
     inFlight += 1;
