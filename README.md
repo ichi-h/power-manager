@@ -10,6 +10,7 @@
 - [アーキテクチャ設計](docs/architecture.md) — 技術選定とその根拠、構成、実装方針
 - [セキュリティ設計](docs/security.md) — 認証・CSRF・秘密情報・プロセス権限
 - [運用設計](docs/operations.md) — 設定JSON・NixOS 配備・CI・テスト
+- [手動受け入れ記録用紙](docs/acceptance-record.md) — ホームラボでの受け入れ確認の記録
 
 ## 開発
 
