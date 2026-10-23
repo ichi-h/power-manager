@@ -27,6 +27,7 @@ import {
 import { configurationErrorExitCode } from '../app/lib/exit-codes.ts';
 import type { ManagedConfig } from '../app/lib/model.ts';
 import { ManagedConfigError } from '../app/lib/runtime-config.server.ts';
+import { applyEnvironmentFile } from './env-file.ts';
 
 /** 終了処理を差し替えられるようにする（テストで `process.exit` を呼ばせない）。 */
 export type ExitFunction = (code: number) => void;
@@ -116,6 +117,10 @@ export async function startRuntime(
 ): Promise<StartupResult> {
   let runtime: RuntimeConfig;
   try {
+    // 環境変数ファイルはここで読む。`dev` と `start` の両方がこの関数を通るため、
+    // エントリごとに呼び忘れることがない。既存の環境変数は上書きしない。
+    applyEnvironmentFile(env, exit);
+
     runtime = loadRuntimeConfig(env);
   } catch (error) {
     if (!(error instanceof ConfigurationError)) throw error;
