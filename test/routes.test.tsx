@@ -15,7 +15,10 @@ import { renderToString } from 'react-dom/server';
 import { RouterContextProvider } from 'react-router';
 import { describe, expect, test } from 'vitest';
 
-import { configStoreContext, createConfigStore } from '../app/lib/config-store.server.ts';
+import {
+  configStoreContext,
+  createConfigStore,
+} from '../app/lib/config-store.server.ts';
 import { parseManagedConfig } from '../app/lib/runtime-config.server.ts';
 import Root, { ErrorBoundary } from '../app/root.tsx';
 import Confirm, { loader as confirmLoader } from '../app/routes/confirm.tsx';
@@ -176,7 +179,8 @@ describe('停止の確認ページ', () => {
         } as never),
       };
     } catch (error) {
-      if (error instanceof Response) return { kind: 'redirect', response: error };
+      if (error instanceof Response)
+        return { kind: 'redirect', response: error };
       throw error;
     }
   }
