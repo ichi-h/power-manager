@@ -43,7 +43,11 @@ import {
 } from './app.ts';
 import { createDevRequestHandler } from './dev-handler.ts';
 import { logRequestFailure } from './log.ts';
-import { exitAfterStartupFailure, startRuntime } from './startup.ts';
+import {
+  exitAfterStartupFailure,
+  startRuntime,
+  type StartupResult,
+} from './startup.ts';
 
 /** 開発時に読み込む仮想モジュール。`@react-router/dev` の Vite プラグインが提供する。 */
 const serverBuildModuleId = 'virtual:react-router/server-build';
@@ -66,7 +70,7 @@ let handleRequest: (
   response.end('Starting up');
 };
 
-let startup;
+let startup: StartupResult;
 try {
   startup = await startRuntime();
 } catch (error) {
