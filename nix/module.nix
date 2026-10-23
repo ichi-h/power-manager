@@ -50,4 +50,67 @@ in
     };
   };
 
+  config = lib.mkIf cfg.enable {
+    systemd.services.power-manager = {
+      description = "power-manager";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
+
+      # `environment.PATH` ではなく `path` を使う。NixOS は `path` を既定の PATH の後ろへ
+      # 連結するため、`environment.PATH` を直接定義すると既定値と衝突して評価に失敗する。
+      path = [ pkgs.openssh ];
+
+      serviceConfig = {
+        ExecStart = "${cfg.package}/bin/power-manager";
+        EnvironmentFile = cfg.environmentFile;
+        Environment = lib.optional (
+          cfg.configFile != null
+        ) "POWER_MANAGER_CONFIG_PATH=${toString cfg.configFile}";
+
+        # 専用の非特権ユーザーで実行する（SEC-08）。
+        User = "power-manager";
+        Group = "power-manager";
+        UMask = "0077";
+
+        Restart = "on-failure";
+        # 78 は sysexits.h の EX_CONFIG。アプリ側の定義は app/lib/exit-codes.ts の
+        # `configurationErrorExitCode` で、この値と一致している必要がある。
+        # 設定不備で再起動を繰り返さない（NFR-05）。
+        RestartPreventExitStatus = [ 78 ];
+
+        NoNewPrivileges = true;
+        CapabilityBoundingSet = "";
+        AmbientCapabilities = "";
+
+        PrivateTmp = true;
+        PrivateDevices = true;
+
+        # アプリケーションは実行時にファイルを書かない（NFR-02）。そのため
+        # StateDirectory も ReadWritePaths も要求しない。
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        ProtectControlGroups = true;
+        ProtectKernelModules = true;
+        ProtectKernelTunables = true;
+        ProtectKernelLogs = true;
+        ProtectClock = true;
+        ProtectHostname = true;
+
+        LockPersonality = true;
+        RestrictSUIDSGID = true;
+        RestrictRealtime = true;
+        RestrictNamespaces = true;
+        SystemCallArchitectures = "native";
+
+        # loopback での待受（AF_INET / AF_INET6）、WOL・SSH・TCP 死活確認の外向き通信、
+        # ローカルソケット（AF_UNIX）に必要な範囲だけを許可する。
+        RestrictAddressFamilies = [
+          "AF_UNIX"
+          "AF_INET"
+          "AF_INET6"
+        ];
+      };
+    };
+  };
 }
