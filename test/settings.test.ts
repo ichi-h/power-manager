@@ -148,6 +148,8 @@ function context(options: {
 function reloadArgs(
   provider: RouterContextProvider,
   fields: Record<string, string> = { intent: 'reload' },
+  /** 要求の `Accept`。`text/html` なら通常フォーム送信（NFR-09）。 */
+  accept?: string,
 ) {
   const form = new FormData();
   for (const [key, value] of Object.entries(fields)) form.set(key, value);
@@ -157,6 +159,7 @@ function reloadArgs(
     request: new Request('http://localhost/settings', {
       method: 'POST',
       body: form,
+      headers: accept === undefined ? undefined : { accept },
     }),
   } as never;
 }
@@ -219,6 +222,26 @@ describe('設定画面の loader', () => {
     expect(body).not.toContain('systemctl poweroff');
     expect(body).not.toContain('shutdownCommand');
     expect(body).not.toContain('user');
+  });
+
+  test('クエリから再読込の結果だけを読む（NFR-09）', () => {
+    const cases: ReadonlyArray<readonly [string, unknown]> = [
+      ['?reload=succeeded', { result: 'succeeded', schedules: null }],
+      ['?reload=failed', { result: 'failed' }],
+      // 未知の値・別名のパラメータでは何も表示しない。
+      ['?reload=ok', null],
+      ['?result=succeeded', null],
+      ['', null],
+    ];
+
+    for (const [search, expected] of cases) {
+      const data = loader({
+        context: context({}).context,
+        params: {},
+        request: new Request(`http://localhost/settings${search}`),
+      } as never);
+      expect(data.reloadResult, search).toEqual(expected);
+    }
   });
 
   test('サーバーが 0 台でも空の一覧を返す', () => {
@@ -443,6 +466,46 @@ describe('定義の再読込', () => {
     expect(stop).not.toHaveBeenCalled();
     // 差し替え後の計画は新定義の 3 件（reload 側だけ 3 件に増やした）。
     expect(runner.plans()).toHaveLength(3);
+  });
+
+  test('通常フォーム送信の成功は 303 で結果を載せた設定画面へ戻す（NFR-09）', async () => {
+    const built = context({ runner: fakeRunner() });
+
+    const response = await action(
+      reloadArgs(built.context, undefined, 'text/html'),
+    );
+
+    expect(response.status).toBe(303);
+    expect(await response.text()).toBe('');
+    expect(response.headers.get('location')).toBe('/settings?reload=succeeded');
+  });
+
+  test('通常フォーム送信の失敗も 303 で結果種別だけを戻す（NFR-09）', async () => {
+    const broken = twoServerConfig();
+    broken.groups = [];
+    const built = context({
+      load: async () => parseManagedConfig(broken),
+      runner: fakeRunner(),
+    });
+
+    const response = await action(
+      reloadArgs(built.context, undefined, 'text/html'),
+    );
+
+    expect(response.status).toBe(303);
+    expect(await response.text()).toBe('');
+    expect(response.headers.get('location')).toBe('/settings?reload=failed');
+  });
+
+  test('通常フォーム送信の未知の intent も 303 で戻す（NFR-09）', async () => {
+    const built = context({ runner: fakeRunner() });
+
+    const response = await action(
+      reloadArgs(built.context, { intent: 'unknown' }, 'text/html'),
+    );
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get('location')).toBe('/settings?reload=failed');
   });
 
   test('reload() が例外を投げても failed として応答する（FR-07）', async () => {

@@ -138,6 +138,83 @@ describe('一覧画面の loader', () => {
     // 取得できた状態と、取得できなかった状態（unknown）が混在する。
     expect(data.states).toEqual({ nas: 'online', 'test-01': 'unknown' });
     expect(data.recent).toHaveLength(1);
+    // クエリに結果が無ければ結果は表示しない（NFR-09）。
+    expect(data.result).toBeNull();
+  });
+
+  test('クエリから通常フォーム送信の結果を組み立て、操作は再実行しない（NFR-09）', async () => {
+    const { operate } = actionArgs({});
+    const data = await loader({
+      context: loaderContext({}),
+      params: {},
+      request: new Request('http://localhost/?result=wake%7Csucceeded%7Cnas'),
+    } as never);
+
+    expect(data.result).toEqual({
+      kind: 'single',
+      operation: 'wake',
+      result: 'succeeded',
+      target: 'nas',
+    });
+    // loader が操作を呼ぶことは無い（Post/Redirect/Get）。
+    expect(operate).not.toHaveBeenCalled();
+  });
+
+  test('未知の語彙・壊れたクエリでは結果を表示しない', async () => {
+    const searches = [
+      '?result=reboot%7Csucceeded%7Cnas',
+      '?result=wake%7Cbogus%7Cnas',
+      '?result=wake%7Csucceeded',
+      '?result=error',
+      '?result=error&reason=unknown',
+    ];
+
+    for (const search of searches) {
+      const data = await loader({
+        context: loaderContext({}),
+        params: {},
+        request: new Request(`http://localhost/${search}`),
+      } as never);
+      expect(data.result, search).toBeNull();
+    }
+  });
+
+  test('一括の結果は要約と対象ごとの結果が揃っているときだけ表示する', async () => {
+    const value = 'all%7Cwake%7Cnas%3Asucceeded%3Btest-01%3Askipped%3Abusy';
+
+    const data = await loader({
+      context: loaderContext({}),
+      params: {},
+      request: new Request(
+        `http://localhost/?result=${value}&summary=1%2C0%2C1&count=2`,
+      ),
+    } as never);
+
+    expect(data.result).toEqual({
+      kind: 'batch',
+      scope: { type: 'all' },
+      operation: 'wake',
+      results: [
+        { target: 'nas', operation: 'wake', result: 'succeeded', code: null },
+        {
+          target: 'test-01',
+          operation: 'wake',
+          result: 'skipped',
+          code: 'busy',
+        },
+      ],
+      summary: { ok: 1, failed: 0, skipped: 1 },
+    });
+
+    // 要約・件数が食い違うクエリは表示しない（手で書き換えた URL）。
+    for (const extra of ['', '&summary=1%2C0%2C1', '&count=3', '&count=x']) {
+      const broken = await loader({
+        context: loaderContext({}),
+        params: {},
+        request: new Request(`http://localhost/?result=${value}${extra}`),
+      } as never);
+      expect(broken.result, extra).toBeNull();
+    }
   });
 
   test('サーバーが 0 台でも空の一覧を返す', async () => {
@@ -172,6 +249,8 @@ function actionArgs(
       runtime: unknown,
     ) => Promise<BatchOperationOutcome>;
     config?: Record<string, unknown>;
+    /** 要求の `Accept`。通常フォーム送信（`text/html`）と fetcher を分ける。 */
+    accept?: string;
   } = {},
 ) {
   const operate = vi.fn(
@@ -220,10 +299,32 @@ function actionArgs(
     args: {
       context,
       params: {},
-      request: new Request('http://localhost/', { method: 'POST', body }),
+      request: new Request('http://localhost/', {
+        method: 'POST',
+        body,
+        headers:
+          options.accept === undefined ? undefined : { accept: options.accept },
+      }),
     } as never,
   };
 }
+
+/** 一括操作が全対象で成功する偽の実行器。 */
+const batchSucceeds: (
+  scope: BatchOperationScope,
+  operation: 'wake' | 'shutdown',
+  targets: ReadonlyArray<{ readonly id: string }>,
+  runtime: unknown,
+) => Promise<BatchOperationOutcome> = async (_scope, operation, targets) => ({
+  records: targets.map((target) => ({
+    at: '2026-01-02T03:04:05.000Z',
+    target: { type: 'server' as const, id: target.id },
+    operation,
+    result: 'succeeded' as const,
+    code: null,
+  })),
+  summary: { ok: targets.length, failed: 0, skipped: 0 },
+});
 
 describe('一覧画面の action', () => {
   test('intent と対象を操作器へ渡し、結果種別と対象だけを返す', async () => {
@@ -246,6 +347,60 @@ describe('一覧画面の action', () => {
       sshIdentityFile: '/run/secrets/id_ed25519',
       sshKnownHostsFile: '/etc/power-manager/known_hosts',
     });
+  });
+
+  test('通常フォーム送信には 303 で結果を載せた一覧へ戻す（NFR-09）', async () => {
+    const { operate, args } = actionArgs(
+      { intent: 'shutdown', target: 'nas' },
+      { accept: 'text/html,application/xhtml+xml' },
+    );
+
+    const response = (await action(args)) as Response;
+
+    expect(response.status).toBe(303);
+    // 操作は 1 回だけ実行し、応答本文は持たない（Post/Redirect/Get）。
+    expect(operate).toHaveBeenCalledTimes(1);
+    expect(await response.text()).toBe('');
+    const location = new URL(
+      response.headers.get('location') ?? '',
+      'http://localhost',
+    );
+    expect(location.pathname).toBe('/');
+    expect(location.searchParams.get('result')).toBe('shutdown|succeeded|nas');
+  });
+
+  test('fetcher の要求（text/html を含まない Accept）には JSON を返す', async () => {
+    const { args } = actionArgs(
+      { intent: 'wake', target: 'nas' },
+      { accept: '*/*' },
+    );
+
+    const response = (await action(args)) as Response;
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      target: 'nas',
+      operation: 'wake',
+      result: 'succeeded',
+    });
+  });
+
+  test('通常フォーム送信の不正要求も 303 で戻し、応答本文を晒さない（NFR-09）', async () => {
+    const { operate, args } = actionArgs(
+      { intent: 'reboot', target: 'nas' },
+      { accept: 'text/html' },
+    );
+
+    const response = (await action(args)) as Response;
+
+    expect(response.status).toBe(303);
+    expect(operate).not.toHaveBeenCalled();
+    const location = new URL(
+      response.headers.get('location') ?? '',
+      'http://localhost',
+    );
+    expect(location.searchParams.get('result')).toBe('error');
+    expect(location.searchParams.get('reason')).toBe('invalid_request');
   });
 
   test('未知のサーバー ID・未知の intent は操作せず 400 を返す', async () => {
@@ -289,6 +444,47 @@ describe('一覧画面の action', () => {
 });
 
 describe('一括操作の action', () => {
+  test('通常フォーム送信の一括は 303 で範囲・操作・対象ごとの結果を戻す（NFR-09）', async () => {
+    const { operateAll, args } = actionArgs(
+      { intent: 'wake-group', scopeKind: 'all' },
+      { accept: 'text/html', operateAll: batchSucceeds },
+    );
+
+    const response = (await action(args)) as Response;
+
+    expect(response.status).toBe(303);
+    expect(operateAll).toHaveBeenCalledTimes(1);
+    const location = new URL(
+      response.headers.get('location') ?? '',
+      'http://localhost',
+    );
+    expect(location.pathname).toBe('/');
+    expect(location.searchParams.get('result')).toBe(
+      'all|wake|nas:succeeded;test-01:succeeded',
+    );
+    // 要約と件数を載せ、戻り先が件数の食い違いを検出できるようにする。
+    expect(location.searchParams.get('summary')).toBe('2,0,0');
+    expect(location.searchParams.get('count')).toBe('2');
+  });
+
+  test('通常フォーム送信の一括失敗も 303 で理由だけを戻す（NFR-09）', async () => {
+    const { operateAll, args } = actionArgs(
+      { intent: 'wake-group', scopeKind: 'group' },
+      { accept: 'text/html' },
+    );
+
+    const response = (await action(args)) as Response;
+
+    expect(response.status).toBe(303);
+    expect(operateAll).not.toHaveBeenCalled();
+    const location = new URL(
+      response.headers.get('location') ?? '',
+      'http://localhost',
+    );
+    expect(location.searchParams.get('result')).toBe('error');
+    expect(location.searchParams.get('reason')).toBe('invalid_request');
+  });
+
   test('グループ一括は対象を ID で重複排除し、対象ごとの結果と要約を返す', async () => {
     const { operateAll, args } = actionArgs(
       { intent: 'shutdown-group', scopeKind: 'group', scopeId: 'storage' },

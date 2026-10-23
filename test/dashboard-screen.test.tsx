@@ -374,6 +374,101 @@ describe('部分更新（FR-02, FR-07, NFR-09）', () => {
   });
 });
 
+describe('通常フォーム送信の結果表示（NFR-09）', () => {
+  test('単体操作の結果をクエリから描く', async () => {
+    renderDashboard(
+      loaderData({
+        result: {
+          kind: 'single',
+          operation: 'wake',
+          result: 'succeeded',
+          target: 'nas',
+        },
+      }),
+    );
+
+    expect(await screen.findByText('NAS: 起動: 成功')).toBeDefined();
+  });
+
+  test('一括操作の要約と対象ごとの結果をクエリから描く', async () => {
+    renderDashboard(
+      loaderData({
+        result: {
+          kind: 'batch',
+          scope: { type: 'all' },
+          operation: 'wake',
+          results: [
+            {
+              target: 'nas',
+              operation: 'wake',
+              result: 'succeeded',
+              code: null,
+            },
+            {
+              target: 'test-01',
+              operation: 'wake',
+              result: 'skipped',
+              code: 'busy',
+            },
+          ],
+          summary: { ok: 1, failed: 0, skipped: 1 },
+        },
+      }),
+    );
+
+    expect(
+      await screen.findByText('1 件成功 / 0 件失敗 / 1 件スキップ'),
+    ).toBeDefined();
+    expect(screen.getByText('NAS: 成功')).toBeDefined();
+    expect(
+      screen.getByText('検証機 01: スキップ（実行中のためスキップしました）'),
+    ).toBeDefined();
+  });
+
+  test('未知の理由の語彙は画面に出さない（SEC-05）', async () => {
+    renderDashboard(
+      loaderData({
+        result: {
+          kind: 'batch',
+          scope: { type: 'all' },
+          operation: 'wake',
+          results: [
+            {
+              target: 'nas',
+              operation: 'wake',
+              result: 'skipped',
+              code: 'internal_detail',
+            },
+          ],
+          summary: { ok: 0, failed: 0, skipped: 1 },
+        },
+      }),
+    );
+
+    expect(await screen.findByText('NAS: スキップ')).toBeDefined();
+    expect(screen.queryByText(/internal_detail/)).toBeNull();
+  });
+
+  test('受け付けられなかった理由は固定の文言で出す（NFR-09）', async () => {
+    renderDashboard(
+      loaderData({ result: { kind: 'error', reason: 'targets_changed' } }),
+    );
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain(
+      '対象が変わりました。画面を再読み込みしてから操作し直してください。',
+    );
+  });
+
+  test('結果が無ければ何も出さない', async () => {
+    renderDashboard(loaderData({ result: null }));
+
+    await screen.findByText('サーバー一覧');
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+});
+
 describe('停止の確認', () => {
   test('拒否したら送信しない（FR-05, SEC-07）', async () => {
     const onAction = vi.fn();

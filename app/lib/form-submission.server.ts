@@ -14,8 +14,8 @@
 
 /** 要求がスクリプト無効時の通常フォーム送信かどうか。 */
 export function isFormSubmission(request: Request): boolean {
-  const accept = request.headers.get('accept');
-  return accept !== null && accept.includes('text/html');
+  const accept = request.headers.get('accept') ?? '';
+  return accept.includes('text/html');
 }
 
 /**

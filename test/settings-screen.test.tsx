@@ -214,6 +214,29 @@ describe('再読込後の loader 再検証と URL（FR-07, FR-14）', () => {
   });
 });
 
+describe('通常フォーム送信（スクリプト無効時）の結果表示（NFR-09）', () => {
+  test('クエリから読んだ結果種別だけを出す', async () => {
+    renderSettings(
+      loaderData({ reloadResult: { result: 'succeeded', schedules: null } }),
+    );
+
+    expect(await screen.findByText('再読込: 成功')).toBeDefined();
+  });
+
+  test('失敗もクエリから読んで表示する', async () => {
+    renderSettings(loaderData({ reloadResult: { result: 'failed' } }));
+
+    expect(await screen.findByText('再読込: 失敗')).toBeDefined();
+  });
+
+  test('クエリに結果が無ければ何も出さない', async () => {
+    renderSettings(loaderData({ reloadResult: null }));
+
+    await screen.findByText('定義を再読込');
+    expect(screen.queryByText(/再読込: /)).toBeNull();
+  });
+});
+
 describe('再読込の進行表示と結果', () => {
   test('開始直後から進行中を表示し、完了後は結果種別を出す', async () => {
     let finish: (payload: ReloadPayload) => void = () => {};

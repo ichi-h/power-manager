@@ -163,12 +163,6 @@ export type SingleResultQuery = {
 };
 
 /**
- * 通常フォーム送信のリダイレクトで運ぶ一括操作の結果（NFR-09, FR-11）。
- *
- * `results` と `summary` は fetcher 経由の応答（`BatchOperationResult`）と同じ形に
- * して、画面の描画経路を 1 本に揃える。
- */
-/**
  * 一括操作の対象 1 件分の結果（表示用）。
  *
  * `code` を `string` で受けるのは、クエリは利用者が書き換えられるためである。
@@ -235,8 +229,11 @@ function errorRedirectResponse(reason: ErrorQuery['reason']): Response {
  * なるため、1 項目に収める。
  */
 function encodeBatchResult(query: BatchResultQuery): string {
+  // 実行しなかった理由が無いときは末尾の区切りを省く（クエリを短く保つ）。
   const items = query.results.map((item) =>
-    [item.target, item.result, item.code ?? ''].join(':'),
+    item.code === null
+      ? [item.target, item.result].join(':')
+      : [item.target, item.result, item.code].join(':'),
   );
   return [
     query.scope.type === 'all' ? 'all' : query.scope.id,
@@ -1304,7 +1301,7 @@ function BatchControls({
                 {resultLabels[result.result]}
                 {/* 実行しなかった理由は語彙ではなく日本語で添える（docs/architecture.md 6.4）。 */}
                 {result.result === 'skipped' && result.code !== null
-                  ? `（${skipReasonLabels[result.code]}）`
+                  ? `（${skipReasonLabel(result.code) ?? ''}）`
                   : null}
               </li>
             ))}
@@ -1353,15 +1350,21 @@ function ResultNotice({
         {result.summary.skipped} 件スキップ
       </p>
       <ul>
-        {result.results.map((item) => (
-          <li key={item.target}>
-            {names.get(item.target) ?? item.target}: {resultLabels[item.result]}
-            {/* 実行しなかった理由は語彙ではなく日本語で添える（docs/architecture.md 6.4）。 */}
-            {item.result === 'skipped' && item.code !== null
-              ? (skipReasonLabel(item.code) ?? '')
-              : null}
-          </li>
-        ))}
+        {result.results.map((item) => {
+          // 実行しなかった理由は語彙ではなく日本語で添える
+          // （docs/architecture.md 6.4）。未知の語彙では何も添えない。
+          const reason =
+            item.result === 'skipped' && item.code !== null
+              ? skipReasonLabel(item.code)
+              : null;
+          return (
+            <li key={item.target}>
+              {names.get(item.target) ?? item.target}:{' '}
+              {resultLabels[item.result]}
+              {reason === null ? null : `（${reason}）`}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

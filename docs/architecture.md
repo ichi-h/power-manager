@@ -229,7 +229,11 @@ export function createLoadContext(runtime: RuntimeConfig, configStore: ConfigSto
 
 ### 4.3 スクリプト無効時
 
-React Router はスクリプト無効時に通常のフォーム送信として action を実行する。この場合 action は `303` で `/?result=...&target=...` へ戻り、一覧画面がクエリから結果表示を組み立てる。操作の再実行は起きない（Post/Redirect/Get）。スクリプト無効時は自動更新も行われない（NFR-09 が許容する範囲）。
+React Router はスクリプト無効時に通常のフォーム送信として action を実行する。action は `Accept` ヘッダに `text/html` を含む要求を通常フォーム送信と見なし、`303` で一覧画面へ戻す（`app/lib/form-submission.server.ts` の `isFormSubmission`）。`fetcher` 経由の要求は `text/html` を含まないため、従来どおり JSON の応答を受ける。
+
+戻り先のクエリは 2 種類ある。単体操作は `/?result=<操作>|<結果>|<対象>`、一括操作は `/?result=<範囲>|<操作>|<対象>:<結果>[:<理由>];...&summary=<成功>,<失敗>,<スキップ>&count=<件数>` である。理由は `skipped` のときだけ載る。一覧画面はクエリから結果表示を組み立て、要約と `count` が食い違うクエリ（手で書き換えた URL など）は表示しない。操作を受け付けられなかった場合は `/?result=error&reason=<理由>` へ戻し、固定の文言だけを出す。操作の再実行は起きない（Post/Redirect/Get）。スクリプト無効時は自動更新も行われない（NFR-09 が許容する範囲）。
+
+設定画面（`app/routes/settings.tsx`）の定義の再読込も同じ規則に従い、通常フォーム送信には `303` で `/settings?reload=<結果種別>` へ戻す。
 
 ## 5. 死活確認の実装
 
