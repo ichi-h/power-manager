@@ -16,6 +16,7 @@ import {
   historyContext,
   createOperationHistory,
 } from '../app/lib/history.server.ts';
+import { CONFIRM_INTENT } from '../app/lib/confirm.ts';
 import { operatorContext } from '../app/lib/operator-context.server.ts';
 import { parseManagedConfig } from '../app/lib/runtime-config.server.ts';
 import type {
@@ -258,6 +259,13 @@ function actionArgs(
     config?: Record<string, unknown>;
     /** 要求の `Accept`。通常フォーム送信（`text/html`）と fetcher を分ける。 */
     accept?: string;
+    /**
+     * 停止の確認を経由していない要求として送る（FR-05, SEC-07）。
+     *
+     * 既定では停止の intent に確認済みの値（`CONFIRM_INTENT`）を足し、確認ページを
+     * 経由した要求として扱う。確認を欠いた要求の扱いを試すときだけ真にする。
+     */
+    unconfirmed?: boolean;
   } = {},
 ) {
   const operate = vi.fn(
@@ -297,6 +305,14 @@ function actionArgs(
   const body = new FormData();
   for (const [key, value] of Object.entries(fields)) {
     if (value !== undefined) body.set(key, value);
+  }
+  // 停止は確認ページを経由した要求にだけ実行する（FR-05, SEC-07）。既定では
+  // 確認ページの送信を模して確認済みの値を足す。
+  if (
+    options.unconfirmed !== true &&
+    String(fields.intent).startsWith('shutdown')
+  ) {
+    body.set('confirmedIntent', CONFIRM_INTENT);
   }
 
   return {
@@ -875,6 +891,61 @@ describe('一括操作の action', () => {
     const response = (await action(args)) as Response;
     expect(response.status).toBe(200);
     expect(operateAll).toHaveBeenCalledTimes(1);
+  });
+
+  test('確認を経ていない停止は操作せず確認ページへ送り返す（FR-05, SEC-07）', async () => {
+    // スクリプト無効の通常フォーム送信でも、確認ページの送信ボタン以外は停止しない。
+    const cases: ReadonlyArray<{
+      readonly fields: Record<string, string | undefined>;
+      readonly expected: Record<string, string>;
+    }> = [
+      {
+        fields: { intent: 'shutdown', target: 'nas' },
+        expected: { kind: 'server', target: 'nas' },
+      },
+      {
+        fields: {
+          intent: 'shutdown-group',
+          scopeKind: 'group',
+          scopeId: 'storage',
+        },
+        expected: { kind: 'batch', scopeKind: 'group', scopeId: 'storage' },
+      },
+      {
+        fields: { intent: 'shutdown-group', scopeKind: 'all' },
+        expected: { kind: 'batch', scopeKind: 'all' },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const { operate, operateAll, args } = actionArgs(testCase.fields, {
+        unconfirmed: true,
+      });
+
+      const response = (await action(args)) as Response;
+
+      // fetcher からの要求にも 303 を返し、画面を確認ページへ遷移させる。
+      expect(response.status).toBe(303);
+      const location = new URL(
+        response.headers.get('location') ?? '',
+        'http://localhost',
+      );
+      expect(location.pathname).toBe('/confirm');
+      for (const [key, value] of Object.entries(testCase.expected)) {
+        expect(location.searchParams.get(key)).toBe(value);
+      }
+      expect(operate).not.toHaveBeenCalled();
+      expect(operateAll).not.toHaveBeenCalled();
+    }
+  });
+
+  test('起動は確認を挟まずに操作する（FR-05）', async () => {
+    const { operate, args } = actionArgs({ intent: 'wake', target: 'nas' });
+
+    const response = (await action(args)) as Response;
+
+    expect(response.status).toBe(200);
+    expect(operate).toHaveBeenCalledTimes(1);
   });
 
   test('成功応答と失敗応答を取り違えない（画面の型判定）', () => {

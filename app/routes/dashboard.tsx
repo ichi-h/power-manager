@@ -12,11 +12,12 @@
  * `fetcher.submit` で action を呼び、`fetcher.state` / `fetcher.data` をその行に出す
  * （FR-07）。ページ全体の再読み込みも URL の変更も起こさない（FR-14）。
  */
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useFetcher, type RouterContext } from 'react-router';
 
 import type { Route } from './+types/dashboard';
 import { requireConfigStore } from '../lib/config-store.server.ts';
+import { CONFIRM_INTENT } from '../lib/confirm.ts';
 import { isFormSubmission, seeOther } from '../lib/form-submission.server.ts';
 import type { HistoryRecord, HistoryResponse } from '../lib/history-context.ts';
 import { requireHistory } from '../lib/history.server.ts';
@@ -568,6 +569,14 @@ export async function action({ request, context }: Route.ActionArgs) {
   const server = config.servers.find((candidate) => candidate.id === target);
   if (server === undefined) return badRequest(formSubmission);
 
+  // 単体の停止も確認ページを必ず 1 段挟む（FR-05, SEC-07）。確認ページの送信だけが
+  // `confirmedIntent` を持つ。持たない要求は操作せず確認ページへ送り返す。fetcher の
+  // 要求にも 303 を返し、画面を確認ページへ遷移させる（スクリプトの有無で確認の
+  // 段数が変わらないようにする）。
+  if (isShutdownOperation(intent) && !isConfirmed(form)) {
+    return confirmRedirectResponse({ type: 'server', id: server.id });
+  }
+
   const record = await requireOperator(context).operate(
     server.id,
     { type: 'server', id: server.id },
@@ -638,9 +647,16 @@ async function runBatch(
   if (targets.length === 0)
     return batchFailure(...invalidBatch, formSubmission);
 
-  // 確認ダイアログに出した集合と、いま確定した集合が一致するかを照合する。確認のあとで
+  // 停止は確認ページを必ず 1 段挟む（FR-11, SEC-07）。確認ページの送信だけが
+  // `confirmedIntent` を持つため、持たない要求（画面のボタンから直接送られたもの、
+  // および確認ページへ遷移するための送信）は操作せず確認ページへ送り返す。
+  if (isShutdownOperation(operation) && !isConfirmed(form)) {
+    return confirmRedirectResponse({ type: 'batch', scope });
+  }
+
+  // 確認ページに出した集合と、いま確定した集合が一致するかを照合する。確認のあとで
   // 設定が再読込されたり対象の所属が変わったりしても、利用者が承認していないサーバーを
-  // 停止しない（SEC-07）。`confirmed` が無い要求は照合しない（確認を挟まない起動）。
+  // 停止しない（SEC-07）。
   const rawConfirmed = form.get('confirmed');
   if (typeof rawConfirmed === 'string') {
     const confirmed = rawConfirmed.split(',');
@@ -719,6 +735,55 @@ const targetsChanged = [
   '対象が変わりました。画面を再読み込みしてから操作し直してください。',
   409,
 ] as const;
+
+/**
+ * 停止の確認済みを表す固定の値（FR-11, SEC-07）。
+ *
+ * 確認ページの送信ボタンだけがこの値を持ち、確認ページへ遷移するための送信は持たない。
+ * action は「値があるか」ではなく「値がこの文字列か」で確認済みを判定する。
+ */
+// 確認済みの値は確認ページと共有する（`app/lib/confirm.ts`）。
+
+/** 停止の確認を求める操作かどうか。 */
+function isShutdownOperation(operation: PowerOperation): boolean {
+  return operation === 'shutdown';
+}
+
+/**
+ * 確認ページを経由した要求かどうか（FR-11, SEC-07）。
+ *
+ * スクリプト無効時の通常フォーム送信、スクリプト有効時の `fetcher` 送信のどちらでも、
+ * 停止は確認ページを経由した要求にだけ `confirmedIntent` が付く。付いていない要求は
+ * 確認を挟んでいないため、action は操作しない。
+ */
+function isConfirmed(form: FormData): boolean {
+  return form.get('confirmedIntent') === CONFIRM_INTENT;
+}
+
+/** 確認ページが受け取る対象範囲（`/confirm` のクエリから読む）。 */
+export type ConfirmTarget =
+  | { readonly type: 'server'; readonly id: string }
+  | { readonly type: 'batch'; readonly scope: BatchOperationScope };
+
+/**
+ * 停止の確認ページへ `303` で遷移する（FR-05, SEC-07）。
+ *
+ * 対象の表示名を列挙した確認ページを経由させることで、スクリプトが無効でも確認を
+ * 1 段挟める。対象 ID は区切り文字を定義できるため、載せる前にエスケープする
+ * （`URLSearchParams` に任せる）。
+ */
+function confirmRedirectResponse(target: ConfirmTarget): Response {
+  const params = new URLSearchParams({ path: '/' });
+  if (target.type === 'server') {
+    params.set('kind', 'server');
+    params.set('target', target.id);
+  } else {
+    params.set('kind', 'batch');
+    params.set('scopeKind', target.scope.type);
+    if (target.scope.type === 'group') params.set('scopeId', target.scope.id);
+  }
+  return seeOther(`/confirm?${params.toString()}`);
+}
 
 /**
  * 一括操作を受け付けられなかった応答。
@@ -1063,7 +1128,10 @@ function isOperationRecord(value: unknown): value is HistoryRecord {
   return typeof target.id === 'string';
 }
 
-/** 1 行の操作ボタン。停止は確認ダイアログを出し、拒否時は送信しない（FR-05, SEC-07）。 */
+/**
+ * 1 行の操作ボタン。停止は確認ページを経由させ、拒否の機会を必ず 1 段挟む
+ * （FR-05, SEC-07）。
+ */
 function OperationButton({
   server,
   operation,
@@ -1079,15 +1147,6 @@ function OperationButton({
     <form
       method="post"
       onSubmit={(event) => {
-        // 予約による停止は人間の確認を挟まない（`docs/security.md` 3.3）。この確認は
-        // 「画面から人が押したとき」にだけ効く位置にあり、action や予約経路には入らない。
-        if (
-          operation === 'shutdown' &&
-          !window.confirm(`${server.name} を停止しますか`)
-        ) {
-          event.preventDefault();
-          return;
-        }
         event.preventDefault();
         fetcher.submit(event.currentTarget);
       }}
@@ -1218,7 +1277,7 @@ function RecentRow({ record }: { record: HistoryRecord }) {
  *
  * - 全台一括と、グループごとの一括で共通に使う。対象範囲は `scopeKind`（`all` / `group`）
  *   と `scopeId`（グループ ID）を hidden で送る。
- * - 停止は対象の表示名を列挙した確認を 1 回だけ出し、拒否時は送信しない（SEC-07）。
+ * - 停止は確認ページを経由させ、対象の表示名を列挙した確認を必ず 1 段挟む（SEC-07）。
  * - 結果は対象ごとの種別と「n 件成功 / m 件失敗 / k 件スキップ」の要約を出す。
  */
 function BatchControls({
@@ -1238,32 +1297,18 @@ function BatchControls({
   const failure = isBatchOperationFailure(data) ? data : null;
   const succeeded = isBatchOperationResult(data) ? data : null;
 
-  const submit = (
-    event: FormEvent<HTMLFormElement>,
-    operation: PowerOperation,
-  ) => {
-    event.preventDefault();
-    if (operation === 'shutdown') {
-      // 対象の表示名を列挙し、確認は 1 回だけ出す（FR-11, SEC-07）。
-      const listed = targets.map((target) => target.name).join('、');
-      if (!window.confirm(`次のサーバーを停止しますか: ${listed}`)) return;
-      // 確認した対象を送り、action 側で確定した集合と照合させる。確認のあとに設定が
-      // 変わっても、承認していないサーバーを停止しないためである。
-      const confirmed = event.currentTarget.elements.namedItem('confirmed');
-      if (confirmed instanceof HTMLInputElement) {
-        confirmed.value = targets.map((target) => target.id).join(',');
-      }
-    }
-    fetcher.submit(event.currentTarget);
-  };
-
   return (
     <div>
       {(['wake', 'shutdown'] as const).map((operation) => (
         <form
           key={operation}
           method="post"
-          onSubmit={(event) => submit(event, operation)}
+          onSubmit={(event) => {
+            // スクリプト有効時は fetcher で送り、画面遷移を起こさない（FR-14）。
+            // 停止の確認は action が確認ページへ送り返すことで挟む（SEC-07）。
+            event.preventDefault();
+            fetcher.submit(event.currentTarget);
+          }}
         >
           <input type="hidden" name="intent" value={`${operation}-group`} />
           <input
@@ -1275,6 +1320,8 @@ function BatchControls({
             <input type="hidden" name="scopeId" value={scope.id} />
           ) : null}
           {operation === 'shutdown' ? (
+            // 停止は確認ページを経由させる。action は `confirmedIntent` の無い
+            // 停止要求を操作せず確認ページへ送り返す（FR-11, SEC-07）。
             <input type="hidden" name="confirmed" defaultValue="" />
           ) : null}
           <button type="submit" disabled={running || targets.length === 0}>

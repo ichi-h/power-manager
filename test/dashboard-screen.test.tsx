@@ -148,6 +148,8 @@ async function advanceUntil(done: () => boolean) {
 }
 
 beforeEach(() => {
+  // 停止の確認は画面のダイアログではなく確認ページで行う。ダイアログが呼ばれたら
+  // 確認が外れたということなので、既定で呼び出しを検出できるようにしておく。
   vi.spyOn(window, 'confirm').mockReturnValue(true);
 });
 
@@ -469,33 +471,25 @@ describe('通常フォーム送信の結果表示（NFR-09）', () => {
   });
 });
 
-describe('停止の確認', () => {
-  test('拒否したら送信しない（FR-05, SEC-07）', async () => {
+describe('停止の確認（確認ページ経由, FR-05, SEC-07）', () => {
+  test('画面上の停止送信は確認済みの値を送らない（確認ページだけが付ける）', async () => {
     const onAction = vi.fn();
-    vi.mocked(window.confirm).mockReturnValue(false);
     renderDashboard(loaderData(), { onAction });
 
     fireEvent.click(
       (await screen.findAllByRole('button', { name: '停止' }))[0]!,
     );
-    expect(window.confirm).toHaveBeenCalledWith('NAS を停止しますか');
-    expect(onAction).not.toHaveBeenCalled();
-  });
-
-  test('承認したら送信し、対象の表示名を確認に含める', async () => {
-    const onAction = vi.fn();
-    renderDashboard(loaderData(), { onAction });
-
-    fireEvent.click(
-      (await screen.findAllByRole('button', { name: '停止' }))[1]!,
-    );
-    expect(window.confirm).toHaveBeenCalledWith('検証機 01 を停止しますか');
     await vi.waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
-    expect(onAction.mock.calls[0]?.[0]?.get('intent')).toBe('shutdown');
-    expect(onAction.mock.calls[0]?.[0]?.get('target')).toBe('test-01');
+    const form = onAction.mock.calls[0]?.[0] as FormData;
+    expect(form.get('intent')).toBe('shutdown');
+    expect(form.get('target')).toBe('nas');
+    // 確認していない要求は action 側で拒否される（操作は実行されない）。
+    expect(form.get('confirmedIntent')).toBeNull();
+    // 画面のダイアログには依存しない（スクリプト無効でも確認できる）。
+    expect(window.confirm).not.toHaveBeenCalled();
   });
 
-  test('起動は確認を出さない', async () => {
+  test('起動は確認ページを経由しない', async () => {
     const onAction = vi.fn();
     renderDashboard(loaderData(), { onAction });
 
@@ -503,6 +497,7 @@ describe('停止の確認', () => {
       (await screen.findAllByRole('button', { name: '起動' }))[0]!,
     );
     await vi.waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
+    expect(onAction.mock.calls[0]?.[0]?.get('confirmedIntent')).toBeNull();
     expect(window.confirm).not.toHaveBeenCalled();
   });
 });
@@ -582,30 +577,33 @@ describe('一括操作', () => {
     expect(form.get('scopeId')).toBeNull();
   });
 
-  test('一括停止は対象の表示名を列挙した確認を 1 回だけ出し、拒否したら送信しない', async () => {
+  test('一括停止の送信は確認済みの値を送らない（確認ページだけが付ける）', async () => {
     const onAction = vi.fn();
-    vi.mocked(window.confirm).mockReturnValue(false);
     renderDashboard(loaderData(), { onAction });
 
     fireEvent.click(await screen.findByRole('button', { name: '全台停止' }));
-    expect(window.confirm).toHaveBeenCalledTimes(1);
-    const message = vi.mocked(window.confirm).mock.calls[0]?.[0];
-    expect(message).toContain('NAS');
-    expect(message).toContain('検証機 01');
-    expect(onAction).not.toHaveBeenCalled();
-  });
-
-  test('承認したら 1 回だけ送信する', async () => {
-    const onAction = vi.fn();
-    renderDashboard(loaderData(), { onAction, action: () => batchResult() });
-
-    fireEvent.click(await screen.findByRole('button', { name: '全台停止' }));
-    expect(window.confirm).toHaveBeenCalledTimes(1);
     await vi.waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
     const form = onAction.mock.calls[0]?.[0] as FormData;
     expect(form.get('intent')).toBe('shutdown-group');
-    // 確認した対象を送り、action 側で確定した集合と照合させる（SEC-07）。
-    expect(form.get('confirmed')).toBe('nas,test-01');
+    // 確認ページを経由しない要求は action 側で拒否される（SEC-07）。
+    expect(form.get('confirmedIntent')).toBeNull();
+    expect(window.confirm).not.toHaveBeenCalled();
+  });
+
+  test('確認不一致の失敗応答はメッセージ表示に落とす', async () => {
+    renderDashboard(loaderData(), {
+      action: () => ({
+        error: 'targets_changed' as const,
+        message: '対象が変わりました。画面を再読み込みしてから操作し直してください。',
+      }),
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: '全台停止' }));
+    expect(
+      await screen.findByText(
+        '対象が変わりました。画面を再読み込みしてから操作し直してください。',
+      ),
+    ).toBeDefined();
   });
 
   test('完了後に対象ごとの結果と要約を出す', async () => {
