@@ -51,6 +51,30 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # `ProtectHome = true` で `/home` 配下は見えなくなる。`configFile` だけはここで
+    # 検出できるため、配備時の「なぜか設定が読めない」を評価時点で止める。
+    # 環境変数ファイルは systemd（root）が読むため対象外。SSH 秘密鍵・`known_hosts` の
+    # パスは `environmentFile` の中にあり、モジュールからは参照できない（4.2 の責務）。
+    assertions = [
+      {
+        assertion =
+          cfg.configFile == null
+          || !(lib.hasPrefix "/home/" (toString cfg.configFile) || toString cfg.configFile == "/home");
+        message = ''
+          services.power-manager.configFile を /home 配下に置けません。
+          ProtectHome = true によりサービスからは見えないため、/etc/power-manager など
+          の場所を指定してください。
+        '';
+      }
+    ];
+
+    users.users.power-manager = {
+      isSystemUser = true;
+      group = "power-manager";
+      description = "power-manager service user";
+    };
+    users.groups.power-manager = { };
+
     systemd.services.power-manager = {
       description = "power-manager";
       wantedBy = [ "multi-user.target" ];
