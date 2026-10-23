@@ -32,6 +32,7 @@ import {
   isBatchOperationFailure,
   isBatchOperationResult,
   loader,
+  parseResultQuery,
   toReasonLabel,
   toResultKind,
 } from '../app/routes/dashboard.tsx';
@@ -946,6 +947,123 @@ describe('一括操作の action', () => {
 
     expect(response.status).toBe(200);
     expect(operate).toHaveBeenCalledTimes(1);
+  });
+
+  test('303 の Location は固定のキー集合だけを持ち、キャッシュさせない（afc8）', async () => {
+    // 経路ごとに、クエリへ載せてよいキーを固定する。区切り文字を含む ID を
+    // そのまま連結しないため、要素は独立したキーになる（d079）。
+    const cases: ReadonlyArray<{
+      readonly fields: Record<string, string | undefined>;
+      readonly keys: ReadonlyArray<string>;
+    }> = [
+      {
+        fields: { intent: 'shutdown', target: 'nas' },
+        keys: ['kind', 'operation', 'resultKind', 'target'],
+      },
+      {
+        fields: { intent: 'wake-group', scopeKind: 'group', scopeId: 'storage' },
+        keys: ['kind', 'operation', 'scopeKind', 'scopeId', 'summary', 'count', 'item'],
+      },
+      {
+        // 不正な要求は理由だけを運ぶ。
+        fields: { intent: 'reboot', target: 'nas' },
+        keys: ['kind', 'reason'],
+      },
+    ];
+
+    for (const testCase of cases) {
+      const { args } = actionArgs(testCase.fields, {
+        accept: 'text/html',
+        // 一括は対象ごとの結果を載せるため、結果を持つ偽の実行器を使う。
+        operateAll: batchSucceeds,
+      });
+      const response = (await action(args)) as Response;
+      expect(response.status).toBe(303);
+      // 結果は一時的な値であり、キャッシュさせない。
+      expect(response.headers.get('cache-control')).toBe('no-store');
+      const location = new URL(
+        response.headers.get('location') ?? '',
+        'http://localhost',
+      );
+      expect(location.pathname).toBe('/');
+      // `item` は対象ごとに繰り返すため、キーの集合で見る。
+      expect(new Set(location.searchParams.keys())).toEqual(
+        new Set(testCase.keys),
+      );
+    }
+  });
+
+  test('結果クエリは件数・内訳・対象の整合が取れたものだけを復元する（8c50）', () => {
+    // 正常な一括のクエリ。
+    const ok = new URLSearchParams({
+      kind: 'batch',
+      operation: 'shutdown',
+      scopeKind: 'group',
+      scopeId: 'storage',
+      summary: '1,1,1',
+      count: '3',
+    });
+    for (const item of [
+      'nas:succeeded:',
+      'test-01:failed:operation_failed',
+      'x:y:skipped:busy',
+    ]) {
+      ok.append('item', item);
+    }
+    const parsed = parseResultQuery(`?${ok.toString()}`);
+    expect(parsed).toEqual({
+      kind: 'batch',
+      operation: 'shutdown',
+      scope: { type: 'group', id: 'storage' },
+      results: [
+        { target: 'nas', operation: 'shutdown', result: 'succeeded', code: null },
+        {
+          target: 'test-01',
+          operation: 'shutdown',
+          result: 'failed',
+          code: 'operation_failed',
+        },
+        // 区切り文字を含む対象 ID も、右から区切ることで復元できる。
+        { target: 'x:y', operation: 'shutdown', result: 'skipped', code: 'busy' },
+      ],
+      summary: { ok: 1, failed: 1, skipped: 1 },
+    });
+
+    // 件数（count）と item の数が合わない・要約の内訳が合わないクエリは表示しない。
+    const badCount = new URLSearchParams(ok);
+    badCount.set('count', '2');
+    expect(parseResultQuery(`?${badCount.toString()}`)).toBeNull();
+
+    const badSummary = new URLSearchParams(ok);
+    badSummary.set('summary', '3,0,0');
+    expect(parseResultQuery(`?${badSummary.toString()}`)).toBeNull();
+
+    // 件数の重複は検証をすり抜けるため受けない。
+    const duplicated = new URLSearchParams(ok);
+    duplicated.append('count', '3');
+    expect(parseResultQuery(`?${duplicated.toString()}`)).toBeNull();
+
+    // 空の対象・未知の結果種別は表示しない。
+    const emptyTarget = new URLSearchParams(ok);
+    emptyTarget.delete('item');
+    for (const item of ['nas:succeeded:', ':failed:', 'test-01:unknown:']) {
+      emptyTarget.append('item', item);
+    }
+    emptyTarget.set('summary', '1,1,1');
+    expect(parseResultQuery(`?${emptyTarget.toString()}`)).toBeNull();
+
+    // 上限を超える件数は復元しない（手で書き換えた URL への防御）。
+    const tooMany = new URLSearchParams({
+      kind: 'batch',
+      operation: 'wake',
+      scopeKind: 'all',
+      summary: '201,0,0',
+      count: '201',
+    });
+    for (let index = 0; index < 201; index += 1) {
+      tooMany.append('item', `s${index}:succeeded:`);
+    }
+    expect(parseResultQuery(`?${tooMany.toString()}`)).toBeNull();
   });
 
   test('成功応答と失敗応答を取り違えない（画面の型判定）', () => {

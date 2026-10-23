@@ -204,6 +204,12 @@ export type ErrorQuery = {
 /** クエリから復元した操作の結果表示（単体・一括・失敗のいずれか）。 */
 export type ResultQuery = SingleResultQuery | BatchResultQuery | ErrorQuery;
 
+/** 一括の結果として復元する対象の上限（手で書き換えた URL への防御）。 */
+const maxResultItems = 200;
+
+/** 定義に無い対象の表示文言。ID をそのまま画面に出さない（SEC-05）。 */
+const unknownTargetLabel = '不明な対象';
+
 /** 失敗の理由の表示文言（`docs/architecture.md` 4 章の利用者向け文言）。 */
 const errorMessages: Record<ErrorQuery['reason'], string> = {
   invalid_request:
@@ -375,12 +381,31 @@ function parseBatchQuery(
   if (summary === null) return null;
   const items = params.getAll('item');
   if (Number(rawCount) !== items.length) return null;
+  // 件数は上限で抑える。手で書き換えた URL で際限なく描画させない。
+  if (items.length > maxResultItems) return null;
 
   const parsedItems: BatchResultItem[] = [];
   for (const raw of items) {
     const parsed = parseBatchItem(raw, operation);
     if (parsed === null) return null;
     parsedItems.push(parsed);
+  }
+  // 要約と対象ごとの結果の内訳が食い違えば表示しない。件数だけ合っていても
+  // 要約の内訳が結果と一致しないクエリは、画面の表示を信用できない
+  // （成功は `succeeded`、失敗は `failed` と `rejected`、スキップは `skipped`）。
+  const counted = {
+    ok: parsedItems.filter((item) => item.result === 'succeeded').length,
+    failed: parsedItems.filter(
+      (item) => item.result === 'failed' || item.result === 'rejected',
+    ).length,
+    skipped: parsedItems.filter((item) => item.result === 'skipped').length,
+  };
+  if (
+    summary.ok !== counted.ok ||
+    summary.failed !== counted.failed ||
+    summary.skipped !== counted.skipped
+  ) {
+    return null;
   }
   return {
     kind: 'batch',
@@ -1343,8 +1368,8 @@ function BatchControls({
           </p>
           <ul>
             {succeeded.results.map((result) => (
-              <li key={result.target}>
-                {names.get(result.target) ?? result.target}:{' '}
+              <li key={`${result.target}:${result.result}`}>
+                {names.get(result.target) ?? unknownTargetLabel}:{' '}
                 {resultLabels[result.result]}
                 {/* 実行しなかった理由は語彙ではなく日本語で添える（docs/architecture.md 6.4）。 */}
                 {result.result === 'skipped' && result.code !== null
@@ -1384,7 +1409,7 @@ function ResultNotice({
   if (result.kind === 'single') {
     return (
       <p role="status">
-        {names.get(result.target) ?? result.target}:{' '}
+        {names.get(result.target) ?? unknownTargetLabel}:{' '}
         {operationLabels[result.operation]}: {resultLabels[result.result]}
       </p>
     );
@@ -1397,7 +1422,7 @@ function ResultNotice({
         {result.summary.skipped} 件スキップ
       </p>
       <ul>
-        {result.results.map((item) => {
+        {result.results.map((item, index) => {
           // 実行しなかった理由は語彙ではなく日本語で添える
           // （docs/architecture.md 6.4）。未知の語彙では何も添えない。
           const reason =
@@ -1405,8 +1430,8 @@ function ResultNotice({
               ? skipReasonLabel(item.code)
               : null;
           return (
-            <li key={item.target}>
-              {names.get(item.target) ?? item.target}:{' '}
+            <li key={`${index}:${item.target}`}>
+              {names.get(item.target) ?? unknownTargetLabel}:{' '}
               {resultLabels[item.result]}
               {reason === null ? null : `（${reason}）`}
             </li>
