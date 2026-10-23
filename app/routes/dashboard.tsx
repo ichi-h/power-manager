@@ -249,7 +249,10 @@ function resultLocation(query: ResultQuery): string {
     params.set('count', String(query.results.length));
     for (const item of query.results) {
       // 実行しなかった理由が無いときは空を送り、項目数を一定に保つ。
-      params.append('item', [item.target, item.result, item.code ?? ''].join(':'));
+      params.append(
+        'item',
+        [item.target, item.result, item.code ?? ''].join(':'),
+      );
     }
   }
   return `/?${params.toString()}`;
@@ -320,9 +323,7 @@ function parseOperation(value: string | null): PowerOperation | null {
 }
 
 /** 結果種別の語彙を読む。未知の値は結果を表示しない。 */
-function parseResultKind(
-  value: string | null,
-): OperationResultKind | null {
+function parseResultKind(value: string | null): OperationResultKind | null {
   return value === 'succeeded' ||
     value === 'failed' ||
     value === 'rejected' ||
@@ -359,11 +360,20 @@ function parseBatchQuery(
   // `summary` / `count` は検証をすり抜ける。これらはちょうど 1 つでなければ受けない。
   const rawSummaries = params.getAll('summary');
   const rawCounts = params.getAll('count');
-  if (rawSummaries.length !== 1 || rawCounts.length !== 1) return null;
-  const summary = parseSummary(rawSummaries[0]!);
+  const [rawSummary] = rawSummaries;
+  const [rawCount] = rawCounts;
+  if (
+    rawSummaries.length !== 1 ||
+    rawCounts.length !== 1 ||
+    rawSummary === undefined ||
+    rawCount === undefined
+  ) {
+    return null;
+  }
+  const summary = parseSummary(rawSummary);
   if (summary === null) return null;
   const items = params.getAll('item');
-  if (Number(rawCounts[0]) !== items.length) return null;
+  if (Number(rawCount) !== items.length) return null;
 
   const parsedItems: BatchResultItem[] = [];
   for (const raw of items) {

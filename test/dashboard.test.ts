@@ -76,7 +76,7 @@ function twoServerConfig() {
 }
 
 /** loader の loader 引数に渡す load context。 */
-export function loaderContext(options: {
+function loaderContext(options: {
   config?: Record<string, unknown>;
   states?: ReadonlyMap<string, 'online' | 'offline' | 'unknown'>;
   recent?: ReadonlyArray<PowerOperationRecord>;
@@ -462,7 +462,7 @@ describe('一覧画面の action', () => {
       {
         fields: { intent: 'shutdown', target: 'nas;1' },
         expected: {
-          kind: 'single',  // 単体はセミコロンを使わないため復元できる
+          kind: 'single', // 単体はセミコロンを使わないため復元できる
           operation: 'shutdown',
           result: 'succeeded',
           target: 'nas;1',
@@ -529,7 +529,7 @@ describe('一覧画面の action', () => {
       const data = await loader({
         context: loaderContext({ config }),
         params: {},
-      request: new Request(`http://localhost${location}`),
+        request: new Request(`http://localhost${location}`),
       } as never);
       expect(data.result, `case ${index}`).toEqual(testCase.expected);
     }
