@@ -218,28 +218,41 @@ const errorMessages: Record<ErrorQuery['reason'], string> = {
  * 生の応答が出る。固定の理由だけをクエリで運び、一覧画面に文言を組み立てさせる。
  */
 function errorRedirectResponse(reason: ErrorQuery['reason']): Response {
-  return seeOther(`/?result=error&reason=${reason}`);
+  return seeOther(resultLocation({ kind: 'error', reason }));
 }
 
 /**
- * 一括操作の結果を 1 つのクエリ値へまとめる。
+ * 結果表示をクエリへ組み立てる（単体・一括・エラーの共通経路）。
  *
- * 対象ごとの結果は `対象ID:種別[:理由]` を `;` で連結し、`URLSearchParams` で包む。
- * 複数のクエリ項目に分けると、リダイレクトのたびに個数が変わって読み書きが複雑に
- * なるため、1 項目に収める。
+ * 要素を区切り文字（`|` `;` `:`）で連結した 1 つの値にまとめると、区切り文字を
+ * 含むサーバー ID / グループ ID（定義に使える文字を制限していない）と衝突して
+ * 往復が壊れる。そこで各要素を独立したクエリ項目に分け、エスケープは
+ * `URLSearchParams` に 1 か所で任せる（d079）。
  */
-function encodeBatchResult(query: BatchResultQuery): string {
-  // 実行しなかった理由が無いときは末尾の区切りを省く（クエリを短く保つ）。
-  const items = query.results.map((item) =>
-    item.code === null
-      ? [item.target, item.result].join(':')
-      : [item.target, item.result, item.code].join(':'),
-  );
-  return [
-    query.scope.type === 'all' ? 'all' : query.scope.id,
-    query.operation,
-    items.join(';'),
-  ].join('|');
+function resultLocation(query: ResultQuery): string {
+  const params = new URLSearchParams({ kind: query.kind });
+  if (query.kind === 'error') {
+    params.set('reason', query.reason);
+  } else if (query.kind === 'single') {
+    params.set('operation', query.operation);
+    params.set('resultKind', query.result);
+    params.set('target', query.target);
+  } else {
+    params.set('operation', query.operation);
+    params.set('scopeKind', query.scope.type);
+    if (query.scope.type === 'group') params.set('scopeId', query.scope.id);
+    params.set(
+      'summary',
+      [query.summary.ok, query.summary.failed, query.summary.skipped].join(','),
+    );
+    // 要約と件数が食い違うクエリは復元しないため、件数をここで添える。
+    params.set('count', String(query.results.length));
+    for (const item of query.results) {
+      // 実行しなかった理由が無いときは空を送り、項目数を一定に保つ。
+      params.append('item', [item.target, item.result, item.code ?? ''].join(':'));
+    }
+  }
+  return `/?${params.toString()}`;
 }
 
 /**
@@ -249,50 +262,17 @@ function encodeBatchResult(query: BatchResultQuery): string {
  * （Post/Redirect/Get, NFR-09）。
  */
 function batchRedirectResponse(query: BatchResultQuery): Response {
-  return seeOther(
-    buildResultLocation(
-      encodeBatchResult(query),
-      query.summary,
-      query.results.length,
-    ),
-  );
+  return seeOther(resultLocation(query));
 }
 
 /**
  * 単体操作の結果を通常フォーム送信の応答（`303`）へ組み立てる。
  *
  * 対象 ID は定義に使える文字を制限していないため、クエリへ載せる前に必ず
- * エスケープする（`app/lib/runtime-config.server.ts`）。
+ * エスケープする（`URLSearchParams` が担う）。
  */
 function singleRedirectResponse(query: SingleResultQuery): Response {
-  return seeOther(
-    buildResultLocation(
-      [query.operation, query.result, query.target].join('|'),
-    ),
-  );
-}
-
-/**
- * 一覧画面へ戻る `Location` を組み立てる。
- *
- * `URLSearchParams` が値のエスケープを行う。対象 ID に任意の文字を定義できるため、
- * 自前で連結するとクエリの区切りと衝突して表示が壊れる。
- */
-function buildResultLocation(
-  value: string,
-  summary?: BatchOperationResult['summary'],
-  itemCount?: number,
-): string {
-  const params = new URLSearchParams({ result: value });
-  if (summary !== undefined && itemCount !== undefined) {
-    params.set(
-      'summary',
-      [summary.ok, summary.failed, summary.skipped].join(','),
-    );
-    // 要約の件数と対象ごとの結果の個数が食い違うクエリは表示しない。
-    params.set('count', String(itemCount));
-  }
-  return `/?${params.toString()}`;
+  return seeOther(resultLocation(query));
 }
 
 /**
@@ -303,49 +283,45 @@ function buildResultLocation(
  */
 export function parseResultQuery(search: string): ResultQuery | null {
   const params = new URLSearchParams(search);
-  const raw = params.get('result');
-  if (raw === null) return null;
-
-  if (raw === 'error') {
-    const reason = params.get('reason');
-    if (reason !== 'invalid_request' && reason !== 'targets_changed') {
-      return null;
-    }
-    return { kind: 'error', reason };
-  }
-
-  // 一括操作の結果には必ず要約が付く。単体操作と一括操作はどちらも `result` の形が
-  // 「要素を `|` で並べたもの」なので、要約の有無で区別する。
-  return params.has('summary')
-    ? parseBatchQuery(raw, params.get('summary'), params.get('count'))
-    : parseSingleQuery(raw);
+  const kind = params.get('kind');
+  if (kind === 'error') return parseErrorQuery(params);
+  if (kind === 'single') return parseSingleQuery(params);
+  if (kind === 'batch') return parseBatchQuery(params);
+  return null;
 }
 
-/** 単体操作のクエリ値「操作|種別|対象ID」を読む。 */
-function parseSingleQuery(raw: string): ResultQuery | null {
-  const parts = raw.split('|');
-  if (parts.length !== 3) return null;
-  const [operation, result, target] = parts;
-  const parsedOperation = parseOperation(operation);
-  const parsedResult = parseResultKind(result);
-  if (parsedOperation === null || parsedResult === null) return null;
-  if (target === undefined) return null;
-  return {
-    kind: 'single',
-    operation: parsedOperation,
-    result: parsedResult,
-    target,
-  };
+/** エラーのクエリ「reason」を読む。語彙は固定の 2 つに限る。 */
+function parseErrorQuery(
+  params: URLSearchParams,
+): Extract<ResultQuery, { kind: 'error' }> | null {
+  const reason = params.get('reason');
+  if (reason !== 'invalid_request' && reason !== 'targets_changed') {
+    return null;
+  }
+  return { kind: 'error', reason };
+}
+
+/** 単体操作のクエリ（operation / resultKind / target）を読む。 */
+function parseSingleQuery(
+  params: URLSearchParams,
+): Extract<ResultQuery, { kind: 'single' }> | null {
+  const operation = parseOperation(params.get('operation'));
+  const result = parseResultKind(params.get('resultKind'));
+  const target = params.get('target');
+  if (operation === null || result === null) return null;
+  // 対象が空の単体操作はあり得ない（target は必ず送る）。
+  if (target === null || target.length === 0) return null;
+  return { kind: 'single', operation, result, target };
 }
 
 /** 操作の語彙を読む。未知の値は結果を表示しない。 */
-function parseOperation(value: string | undefined): PowerOperation | null {
+function parseOperation(value: string | null): PowerOperation | null {
   return value === 'wake' || value === 'shutdown' ? value : null;
 }
 
 /** 結果種別の語彙を読む。未知の値は結果を表示しない。 */
 function parseResultKind(
-  value: string | undefined,
+  value: string | null,
 ): OperationResultKind | null {
   return value === 'succeeded' ||
     value === 'failed' ||
@@ -355,62 +331,76 @@ function parseResultKind(
     : null;
 }
 
-/** 一括操作のクエリ値「範囲|操作|対象ID:種別[:理由];...」を読む。 */
+/**
+ * 一括操作のクエリ（scopeKind / scopeId / operation / summary / count / item）を読む。
+ *
+ * `scopeKind` と `scopeId` を分けるのは、グループ ID に `all` を定義でき、範囲を 1 つの
+ * 文字列にまとめると「ID が `all` のグループ」と全台一括が区別できないためである。
+ */
 function parseBatchQuery(
-  raw: string,
-  rawSummary: string | null,
-  rawCount: string | null,
-): ResultQuery | null {
-  const [scope, operation, results] = raw.split('|');
-  const parsedOperation = parseOperation(operation);
-  if (
-    parsedOperation === null ||
-    scope === undefined ||
-    results === undefined
-  ) {
-    return null;
+  params: URLSearchParams,
+): Extract<ResultQuery, { kind: 'batch' }> | null {
+  const operation = parseOperation(params.get('operation'));
+  const rawScopeKind = params.get('scopeKind');
+  const rawScopeId = params.get('scopeId');
+  if (operation === null) return null;
+
+  let scope: BatchOperationScope | null = null;
+  if (rawScopeKind === 'all' && rawScopeId === null) {
+    scope = { type: 'all' };
+  } else if (rawScopeKind === 'group' && rawScopeId !== null) {
+    if (rawScopeId.length === 0) return null;
+    scope = { type: 'group', id: rawScopeId };
   }
+  if (scope === null) return null;
 
-  const scopeValue = parseScope(scope);
-  if (scopeValue === null) return null;
+  // 要約と対象ごとの結果が揃っていることを確かめてから表示する（手で書き換えた
+  // URL などでは表示しない）。`get()` は重複項目の先頭 1 つを返すため、重複した
+  // `summary` / `count` は検証をすり抜ける。これらはちょうど 1 つでなければ受けない。
+  const rawSummaries = params.getAll('summary');
+  const rawCounts = params.getAll('count');
+  if (rawSummaries.length !== 1 || rawCounts.length !== 1) return null;
+  const summary = parseSummary(rawSummaries[0]!);
+  if (summary === null) return null;
+  const items = params.getAll('item');
+  if (Number(rawCounts[0]) !== items.length) return null;
 
-  const items = results.length === 0 ? [] : results.split(';');
   const parsedItems: BatchResultItem[] = [];
-  for (const item of items) {
-    const parsed = parseBatchItem(item, parsedOperation);
+  for (const raw of items) {
+    const parsed = parseBatchItem(raw, operation);
     if (parsed === null) return null;
     parsedItems.push(parsed);
   }
-
-  const summary = parseSummary(rawSummary);
-  if (summary === null) return null;
-
-  // 要約と対象ごとの結果が食い違うクエリ（手で書き換えた URL など）は表示しない。
-  if (Number(rawCount) !== parsedItems.length) return null;
-
   return {
     kind: 'batch',
-    scope: scopeValue,
-    operation: parsedOperation,
+    scope,
+    operation,
     results: parsedItems,
     summary,
   };
 }
 
-/** 一括操作の範囲を読む。`all` は全台、それ以外はグループ ID として扱う。 */
-function parseScope(value: string): BatchOperationScope | null {
-  if (value === 'all') return { type: 'all' };
-  return value.length === 0 ? null : { type: 'group', id: value };
-}
-
-/** 一括操作の対象 1 件分「対象ID:種別[:理由]」を読む。 */
+/**
+ * 一括操作の対象 1 件分「対象ID:種別[:理由]」を読む。
+ *
+ * 対象 ID に `:` を定義できるため、区切りは末尾（右）から取り、先頭側の残りすべてを
+ * 対象 ID とする。`succeeded` / `skipped` に理由が無いときは末尾を空で送り、
+ * 「対象 ID 末尾が `1`」のような ID と区別できるようにする。
+ */
 function parseBatchItem(
   raw: string,
   operation: PowerOperation,
 ): BatchResultItem | null {
-  const [target, result, code] = raw.split(':');
-  const parsedResult = parseResultKind(result);
-  if (target === undefined || parsedResult === null) return null;
+  const parts = raw.split(':');
+  if (parts.length < 2) return null;
+  const withCode = parts.length >= 3;
+  const result = withCode ? parts[parts.length - 2] : parts[parts.length - 1];
+  const target = withCode
+    ? parts.slice(0, -2).join(':')
+    : parts.slice(0, -1).join(':');
+  const code = withCode ? parts[parts.length - 1] : undefined;
+  const parsedResult = parseResultKind(result ?? null);
+  if (target.length === 0 || parsedResult === null) return null;
   return {
     target,
     operation,

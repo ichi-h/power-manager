@@ -76,7 +76,7 @@ function twoServerConfig() {
 }
 
 /** loader の loader 引数に渡す load context。 */
-function loaderContext(options: {
+export function loaderContext(options: {
   config?: Record<string, unknown>;
   states?: ReadonlyMap<string, 'online' | 'offline' | 'unknown'>;
   recent?: ReadonlyArray<PowerOperationRecord>;
@@ -147,7 +147,9 @@ describe('一覧画面の loader', () => {
     const data = await loader({
       context: loaderContext({}),
       params: {},
-      request: new Request('http://localhost/?result=wake%7Csucceeded%7Cnas'),
+      request: new Request(
+        'http://localhost/?kind=single&operation=wake&resultKind=succeeded&target=nas',
+      ),
     } as never);
 
     expect(data.result).toEqual({
@@ -162,11 +164,12 @@ describe('一覧画面の loader', () => {
 
   test('未知の語彙・壊れたクエリでは結果を表示しない', async () => {
     const searches = [
-      '?result=reboot%7Csucceeded%7Cnas',
-      '?result=wake%7Cbogus%7Cnas',
-      '?result=wake%7Csucceeded',
-      '?result=error',
-      '?result=error&reason=unknown',
+      '?kind=single&operation=reboot&resultKind=succeeded&target=nas',
+      '?kind=single&operation=wake&resultKind=bogus&target=nas',
+      '?kind=single&operation=wake&resultKind=succeeded',
+      '?kind=error',
+      '?kind=error&reason=unknown',
+      '?kind=bogus',
     ];
 
     for (const search of searches) {
@@ -180,14 +183,13 @@ describe('一覧画面の loader', () => {
   });
 
   test('一括の結果は要約と対象ごとの結果が揃っているときだけ表示する', async () => {
-    const value = 'all%7Cwake%7Cnas%3Asucceeded%3Btest-01%3Askipped%3Abusy';
+    const value =
+      'kind=batch&operation=wake&scopeKind=all&summary=1%2C0%2C1&count=2&item=nas%3Asucceeded%3A&item=test-01%3Askipped%3Abusy';
 
     const data = await loader({
       context: loaderContext({}),
       params: {},
-      request: new Request(
-        `http://localhost/?result=${value}&summary=1%2C0%2C1&count=2`,
-      ),
+      request: new Request(`http://localhost/?${value}`),
     } as never);
 
     expect(data.result).toEqual({
@@ -207,11 +209,16 @@ describe('一覧画面の loader', () => {
     });
 
     // 要約・件数が食い違うクエリは表示しない（手で書き換えた URL）。
-    for (const extra of ['', '&summary=1%2C0%2C1', '&count=3', '&count=x']) {
+    for (const extra of [
+      '&summary=1%2C0%2C1',
+      '&count=3',
+      '&count=x',
+      '&summary=2%2C0%2C1',
+    ]) {
       const broken = await loader({
         context: loaderContext({}),
         params: {},
-        request: new Request(`http://localhost/?result=${value}${extra}`),
+        request: new Request(`http://localhost/?${value}${extra}`),
       } as never);
       expect(broken.result, extra).toBeNull();
     }
@@ -366,7 +373,10 @@ describe('一覧画面の action', () => {
       'http://localhost',
     );
     expect(location.pathname).toBe('/');
-    expect(location.searchParams.get('result')).toBe('shutdown|succeeded|nas');
+    expect(location.searchParams.get('kind')).toBe('single');
+    expect(location.searchParams.get('operation')).toBe('shutdown');
+    expect(location.searchParams.get('resultKind')).toBe('succeeded');
+    expect(location.searchParams.get('target')).toBe('nas');
   });
 
   test('fetcher の要求（text/html を含まない Accept）には JSON を返す', async () => {
@@ -399,7 +409,7 @@ describe('一覧画面の action', () => {
       response.headers.get('location') ?? '',
       'http://localhost',
     );
-    expect(location.searchParams.get('result')).toBe('error');
+    expect(location.searchParams.get('kind')).toBe('error');
     expect(location.searchParams.get('reason')).toBe('invalid_request');
   });
 
@@ -428,7 +438,9 @@ describe('一覧画面の action', () => {
   });
 
   test('区切り文字入り ID でも 303 の往復で結果を復元できる（NFR-09）', async () => {
-    const config = twoServerConfig();
+    const config = twoServerConfig() as {
+      servers: Array<{ id: string; name: string; groups: string[] }>;
+    };
     config.servers[0]!.id = 'nas:1';
     config.servers[0]!.name = 'NAS 1';
     config.servers[1]!.id = 'nas;1';
@@ -480,7 +492,10 @@ describe('一覧画面の action', () => {
     ];
 
     for (const [index, testCase] of cases.entries()) {
-      const config = twoServerConfig();
+      const config = twoServerConfig() as {
+        servers: Array<{ id: string; name: string; groups: string[] }>;
+        groups: Array<{ id: string; name: string }>;
+      };
       config.servers[0]!.id = 'nas:1';
       config.servers[0]!.name = 'NAS 1';
       config.servers[1]!.id = 'nas;1';
@@ -496,6 +511,16 @@ describe('一覧画面の action', () => {
       const { args } = actionArgs(testCase.fields, {
         accept: 'text/html',
         config,
+        operateAll: async (_scope, _operation, targets) => ({
+          records: targets.map((target) => ({
+            at: '2026-01-02T03:04:05.000Z',
+            target: { type: 'server', id: target.id },
+            operation: 'wake',
+            result: 'succeeded',
+            code: null,
+          })),
+          summary: { ok: config.servers.length, failed: 0, skipped: 0 },
+        }),
       });
       const response = (await action(args)) as Response;
       expect(response.status, `case ${index}`).toBe(303);
@@ -566,9 +591,13 @@ describe('一括操作の action', () => {
       'http://localhost',
     );
     expect(location.pathname).toBe('/');
-    expect(location.searchParams.get('result')).toBe(
-      'all|wake|nas:succeeded;test-01:succeeded',
-    );
+    expect(location.searchParams.get('kind')).toBe('batch');
+    expect(location.searchParams.get('scopeKind')).toBe('all');
+    expect(location.searchParams.get('operation')).toBe('wake');
+    expect(location.searchParams.getAll('item')).toEqual([
+      'nas:succeeded:',
+      'test-01:succeeded:',
+    ]);
     // 要約と件数を載せ、戻り先が件数の食い違いを検出できるようにする。
     expect(location.searchParams.get('summary')).toBe('2,0,0');
     expect(location.searchParams.get('count')).toBe('2');
@@ -588,7 +617,7 @@ describe('一括操作の action', () => {
       response.headers.get('location') ?? '',
       'http://localhost',
     );
-    expect(location.searchParams.get('result')).toBe('error');
+    expect(location.searchParams.get('kind')).toBe('error');
     expect(location.searchParams.get('reason')).toBe('invalid_request');
   });
 
