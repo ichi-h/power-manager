@@ -421,7 +421,12 @@ describe('一括操作', () => {
       operation: 'wake',
       results: [
         { target: 'nas', operation: 'wake', result: 'succeeded', code: null },
-        { target: 'test-01', operation: 'wake', result: 'succeeded', code: null },
+        {
+          target: 'test-01',
+          operation: 'wake',
+          result: 'succeeded',
+          code: null,
+        },
       ],
       summary: { ok: 2, failed: 0, skipped: 0 },
       ...overrides,
@@ -507,15 +512,23 @@ describe('一括操作', () => {
     expect(form.get('confirmed')).toBe('nas,test-01');
   });
 
-
-
   test('完了後に対象ごとの結果と要約を出す', async () => {
     renderDashboard(loaderData(), {
       action: () =>
         batchResult({
           results: [
-            { target: 'nas', operation: 'wake', result: 'succeeded', code: null },
-            { target: 'test-01', operation: 'wake', result: 'skipped', code: null },
+            {
+              target: 'nas',
+              operation: 'wake',
+              result: 'succeeded',
+              code: null,
+            },
+            {
+              target: 'test-01',
+              operation: 'wake',
+              result: 'skipped',
+              code: null,
+            },
           ],
           summary: { ok: 1, failed: 0, skipped: 1 },
         }),
@@ -534,7 +547,12 @@ describe('一括操作', () => {
       action: () =>
         batchResult({
           results: [
-            { target: 'nas', operation: 'wake', result: 'succeeded', code: null },
+            {
+              target: 'nas',
+              operation: 'wake',
+              result: 'succeeded',
+              code: null,
+            },
             {
               target: 'test-01',
               operation: 'wake',

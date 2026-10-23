@@ -555,7 +555,10 @@ describe('一括操作の action', () => {
     expect(isBatchOperationResult(success)).toBe(true);
     expect(isBatchOperationFailure(success)).toBe(false);
 
-    const failure = { error: 'invalid_request', message: '対象を確定できません' };
+    const failure = {
+      error: 'invalid_request',
+      message: '対象を確定できません',
+    };
     expect(isBatchOperationFailure(failure)).toBe(true);
     // 失敗応答で要約を読むと描画時に例外になるため、成功と判定しない。
     expect(isBatchOperationResult(failure)).toBe(false);

@@ -427,7 +427,13 @@ describe('一括操作の対象集合と要約（FR-11）', () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 1));
     const singleRuns = singles.map((single) =>
-      operator.operate(single.id, { type: 'server', id: single.id }, 'shutdown', single, runtime),
+      operator.operate(
+        single.id,
+        { type: 'server', id: single.id },
+        'shutdown',
+        single,
+        runtime,
+      ),
     );
 
     const [outcome] = await Promise.all([batch, ...singleRuns]);
