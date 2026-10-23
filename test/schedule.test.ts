@@ -148,7 +148,11 @@ describe('fireSchedule（j003）', () => {
           _runtime: unknown,
           options?: { scheduleId?: string },
         ) => {
-          calls.push({ kind: 'operate', id: serverId, scheduleId: options?.scheduleId });
+          calls.push({
+            kind: 'operate',
+            id: serverId,
+            scheduleId: options?.scheduleId,
+          });
           return {};
         },
         operateAll: async (
@@ -156,7 +160,10 @@ describe('fireSchedule（j003）', () => {
           _op: unknown,
           targets: ReadonlyArray<{ id: string }>,
         ) => {
-          calls.push({ kind: 'operateAll', id: targets.map((t) => t.id).join(',') });
+          calls.push({
+            kind: 'operateAll',
+            id: targets.map((t) => t.id).join(','),
+          });
           return {};
         },
       },
@@ -190,7 +197,9 @@ describe('fireSchedule（j003）', () => {
     const { operator, calls } = stubOperator();
     const result = await fireSchedule(
       plan({ target: { type: 'server', id: 'nas' } }),
-      configWithSchedules([validSchedule({ target: { type: 'server', id: 'nas' } })]),
+      configWithSchedules([
+        validSchedule({ target: { type: 'server', id: 'nas' } }),
+      ]),
       { operator, runtime },
       jst('2025-06-01T23:30:09'),
     );
@@ -223,7 +232,9 @@ describe('fireSchedule（j003）', () => {
     const skips: Array<[string, string]> = [];
     const result = await fireSchedule(
       plan({ target: { type: 'server', id: 'nas' } }),
-      configWithSchedules([validSchedule({ target: { type: 'server', id: 'nas' } })]),
+      configWithSchedules([
+        validSchedule({ target: { type: 'server', id: 'nas' } }),
+      ]),
       {
         operator,
         runtime,
@@ -331,12 +342,12 @@ describe('createScheduleRunner（j002, j004）', () => {
 
 describe('isSameTokyoDate', () => {
   test('JST で同じ日付かを判定する', () => {
-    expect(isSameTokyoDate(jst('2025-06-01T23:00:00'), jst('2025-06-01T00:00:00'))).toBe(
-      true,
-    );
-    expect(isSameTokyoDate(jst('2025-06-02T00:00:00'), jst('2025-06-01T23:59:00'))).toBe(
-      false,
-    );
+    expect(
+      isSameTokyoDate(jst('2025-06-01T23:00:00'), jst('2025-06-01T00:00:00')),
+    ).toBe(true);
+    expect(
+      isSameTokyoDate(jst('2025-06-02T00:00:00'), jst('2025-06-01T23:59:00')),
+    ).toBe(false);
   });
 });
 
