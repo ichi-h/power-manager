@@ -88,7 +88,6 @@ describe('並行再読込の直列化', () => {
   // review-t003 の申し送り（チケット 5859）: 2 本の reload が重なっても
   // 「読込み → 検証 → 差し替え」が 1 本ずつ走ることを遅延注入で固定する。
   test('遅い 1 回目と速い 2 回目は到着順に処理され、最後は後の定義になる', async () => {
-    const configStore = await store();
     const first = validManagedConfig();
     (first.servers as Record<string, unknown>[])[0]!.name = '遅い再読込';
     const second = validManagedConfig();

@@ -6,7 +6,7 @@
  */
 // @vitest-environment jsdom
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
-import { createRoutesStub, Outlet, useLocation } from 'react-router';
+import { createRoutesStub, useLocation } from 'react-router';
 import { afterEach, describe, expect, test } from 'vitest';
 
 import Settings, {
@@ -148,7 +148,9 @@ describe('再読込後の loader 再検証と URL（FR-07, FR-14）', () => {
         <>
           <LocationProbe />
           <Settings
-            {...({ loaderData: loaderData() } as unknown as React.ComponentProps<typeof Settings>)}
+            {...({
+              loaderData: loaderData(),
+            } as unknown as React.ComponentProps<typeof Settings>)}
           />
         </>
       );
@@ -187,7 +189,9 @@ describe('再読込後の loader 再検証と URL（FR-07, FR-14）', () => {
         <>
           <LocationProbe />
           <Settings
-            {...({ loaderData: loaderData() } as unknown as React.ComponentProps<typeof Settings>)}
+            {...({
+              loaderData: loaderData(),
+            } as unknown as React.ComponentProps<typeof Settings>)}
           />
         </>
       );
@@ -237,7 +241,8 @@ describe('再読込の進行表示と結果', () => {
   test('失敗のときは失敗という結果種別だけを出す', async () => {
     renderSettings(loaderData(), {
       // 実装が reason を画面へ出してしまえば、この文言が画面に現れる。
-      action: () => ({ result: 'failed', reason: '検証に失敗しました' }) as never,
+      action: () =>
+        ({ result: 'failed', reason: '検証に失敗しました' }) as never,
     });
 
     (await screen.findByText('定義を再読込')).click();

@@ -463,7 +463,11 @@ describe('定義の再読込', () => {
     // 差し替えもログも行わない（検証失敗のときと同じ扱い）。
     expect(runner.replacePlans).not.toHaveBeenCalled();
     expect(logs).toHaveLength(1);
-    const logged = JSON.parse(logs[0] ?? '') as { event?: string; result?: string; reason?: string };
+    const logged = JSON.parse(logs[0] ?? '') as {
+      event?: string;
+      result?: string;
+      reason?: string;
+    };
     expect(logged.event).toBe('config_reload');
     expect(logged.result).toBe('failed');
     // ManagedConfigError 以外の例外は内部の値をそのまま出さず、定型文言になる（SEC-05）。
