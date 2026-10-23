@@ -25,6 +25,7 @@ const loaderData: DashboardLoaderData = {
   groups: [{ id: 'storage', name: 'ストレージ' }],
   states: { nas: 'online' },
   recent: [],
+  result: null,
 };
 
 describe('画面', () => {

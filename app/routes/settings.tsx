@@ -16,6 +16,7 @@ import { useFetcher } from 'react-router';
 import type { Route } from './+types/settings';
 import { requireRuntimeConfig } from '../lib/config.server.ts';
 import { requireConfigStore } from '../lib/config-store.server.ts';
+import { isFormSubmission, seeOther } from '../lib/form-submission.server.ts';
 import type { ManagedConfig, Repeat } from '../lib/model.ts';
 import { ManagedConfigError } from '../lib/runtime-config.server.ts';
 import { logConfigReload } from '../lib/power-log.server.ts';
@@ -34,6 +35,13 @@ export function meta(_args: Route.MetaArgs) {
  */
 export type SettingsLoaderData = {
   readonly configPath: string;
+  /**
+   * 通常フォーム送信（スクリプト無効時）の再読込結果（NFR-09）。
+   *
+   * クエリから読んだ表示専用の値であり、`null` なら何も出さない。ここから再読込を
+   * 再実行することはない（Post/Redirect/Get）。
+   */
+  readonly reloadResult: ReloadPayload | null;
   readonly servers: ReadonlyArray<{
     readonly id: string;
     readonly name: string;
@@ -64,13 +72,34 @@ export type SettingsLoaderData = {
  * 認証は root のミドルウェアが要求する（FR-10, SEC-01）。定義は再読込のたびに
  * 差し替わるため、キャッシュを許さない応答にしておく。
  */
-export function loader({ context }: Route.LoaderArgs): SettingsLoaderData {
+export function loader({
+  context,
+  request,
+}: Route.LoaderArgs): SettingsLoaderData {
   const config = requireConfigStore(context).current();
 
   return {
     configPath: requireConfigPath(context),
+    // 通常フォーム送信の戻り先では、結果をクエリから組み立てる（NFR-09）。
+    reloadResult: parseReloadQuery(new URL(request.url).search),
     ...toSettingsRows(config),
   };
+}
+
+/**
+ * `Location` のクエリから再読込の結果を読む（NFR-09）。
+ *
+ * クエリの値は表示のためだけに読み、再読込を再実行することはない
+ * （Post/Redirect/Get）。未知の値は結果を表示しない（`null`）。
+ */
+function parseReloadQuery(search: string): ReloadPayload | null {
+  const params = new URLSearchParams(search);
+  const result = params.get('reload');
+  if (result === 'failed') return { result: 'failed' };
+  if (result !== 'succeeded') return null;
+
+  // 予約の件数はクエリからは読まない（画面に出すのは結果種別だけである, FR-07）。
+  return { result: 'succeeded', schedules: null };
 }
 
 /**
@@ -120,7 +149,10 @@ export function isReloadPayload(value: unknown): value is ReloadPayload {
  */
 export async function action({ request, context }: Route.ActionArgs) {
   const form = await request.formData();
-  if (form.get('intent') !== 'reload') return invalidRequest();
+  const formSubmission = isFormSubmission(request);
+  if (form.get('intent') !== 'reload') {
+    return invalidRequest(formSubmission);
+  }
 
   // 差し替えに必要な値は、状態を変える前にすべて読む。設定ストアの差し替えが済んだ
   // あとで配線不整合が出ても取り返しが付かないためである（bd05, FR-08）。
@@ -136,12 +168,12 @@ export async function action({ request, context }: Route.ActionArgs) {
     // 理由は ManagedConfigError のときだけ message を使い、それ以外は内部の値を
     // ログへ流さない（SEC-05）。
     logConfigReload('failed', { reason: reloadFailureReason(error) });
-    return jsonResponse({ result: 'failed' } satisfies ReloadPayload);
+    return reloadResponse({ result: 'failed' }, formSubmission);
   }
 
   if (!outcome.ok) {
     logConfigReload('failed', { reason: outcome.reason });
-    return jsonResponse({ result: 'failed' } satisfies ReloadPayload);
+    return reloadResponse({ result: 'failed' }, formSubmission);
   }
 
   // 成功時のみスケジューラを差し替える。実行中の発火は中断しない（NFR-13）。
@@ -154,7 +186,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       schedules = runner.plans().length;
     } catch (error) {
       logConfigReload('failed', { reason: reloadFailureReason(error) });
-      return jsonResponse({ result: 'failed' } satisfies ReloadPayload);
+      return reloadResponse({ result: 'failed' }, formSubmission);
     }
   }
 
@@ -162,10 +194,21 @@ export async function action({ request, context }: Route.ActionArgs) {
     ...(schedules === null ? {} : { schedules }),
   });
 
-  return jsonResponse({
-    result: 'succeeded',
-    schedules,
-  } satisfies ReloadPayload);
+  return reloadResponse({ result: 'succeeded', schedules }, formSubmission);
+}
+
+/**
+ * 再読込の結果を応答へ組み立てる。
+ *
+ * 通常フォーム送信には `303` で設定画面へ戻し、クエリから結果種別だけを表示する
+ * （Post/Redirect/Get, NFR-09）。`fetcher` 経由には従来どおり JSON を返す。
+ */
+function reloadResponse(
+  payload: ReloadPayload,
+  formSubmission: boolean,
+): Response {
+  if (!formSubmission) return jsonResponse(payload);
+  return seeOther(`/settings?reload=${payload.result}`);
 }
 
 /**
@@ -202,8 +245,14 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
-/** 未知の intent・intent 無しの要求。再読込は行わない。 */
-function invalidRequest(): Response {
+/**
+ * 未知の intent・intent 無しの要求。再読込は行わない。
+ *
+ * 通常フォーム送信には失敗として `303` で戻す。応答本文を画面へ晒さない（NFR-09）。
+ */
+function invalidRequest(formSubmission: boolean): Response {
+  if (formSubmission) return seeOther('/settings?reload=failed');
+
   return new Response(JSON.stringify({ error: 'invalid_request' }), {
     status: 400,
     headers: {
@@ -226,7 +275,7 @@ function requireConfigPath(context: Route.LoaderArgs['context']): string {
 /** 定義から画面用の行データを作る。定義順をそのまま保つ（FR-01）。 */
 function toSettingsRows(
   config: ManagedConfig,
-): Omit<SettingsLoaderData, 'configPath'> {
+): Omit<SettingsLoaderData, 'configPath' | 'reloadResult'> {
   const groupNames = new Map(
     config.groups.map((group) => [group.id, group.name]),
   );
@@ -300,10 +349,20 @@ const weekdayLabels = {
  * `fetcher.state` が `idle` でない間は「再読込中」、完了後は結果種別だけを出す。
  * 失敗理由は画面に出さない（ログにだけ残す）。
  */
-function ReloadControls() {
+function ReloadControls({
+  reloadResult,
+}: {
+  reloadResult: ReloadPayload | null;
+}) {
   const fetcher = useFetcher<unknown>();
   const running = fetcher.state !== 'idle';
-  const payload = isReloadPayload(fetcher.data) ? fetcher.data : null;
+  // 通常フォーム送信の結果はクエリから渡る（NFR-09）。`fetcher` の応答が無いときだけ
+  // そちらを出す。
+  const payload = isReloadPayload(fetcher.data)
+    ? fetcher.data
+    : fetcher.state === 'idle'
+      ? reloadResult
+      : null;
 
   return (
     <div>
@@ -334,7 +393,7 @@ export default function Settings({ loaderData }: Route.ComponentProps) {
       <p>
         定義はこの画面からは変更できません。ファイルを編集してから再読込してください。
       </p>
-      <ReloadControls />
+      <ReloadControls reloadResult={loaderData.reloadResult} />
 
       <h3>サーバー</h3>
       {loaderData.servers.length === 0 ? (

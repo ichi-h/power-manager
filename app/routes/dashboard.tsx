@@ -17,6 +17,7 @@ import { useFetcher, type RouterContext } from 'react-router';
 
 import type { Route } from './+types/dashboard';
 import { requireConfigStore } from '../lib/config-store.server.ts';
+import { isFormSubmission, seeOther } from '../lib/form-submission.server.ts';
 import type { HistoryRecord, HistoryResponse } from '../lib/history-context.ts';
 import { requireHistory } from '../lib/history.server.ts';
 import type {
@@ -64,6 +65,13 @@ export type DashboardLoaderData = {
   }>;
   readonly states: Readonly<Record<string, ServerState>>;
   readonly recent: ReadonlyArray<HistoryRecord>;
+  /**
+   * 通常フォーム送信（スクリプト無効時）の結果表示（NFR-09）。
+   *
+   * クエリから組み立てた表示専用の値であり、`null` なら何も出さない。ここから
+   * 操作を再実行することはない（Post/Redirect/Get）。
+   */
+  readonly result: ResultQuery | null;
 };
 
 /**
@@ -78,6 +86,7 @@ export type DashboardLoaderData = {
  */
 export async function loader({
   context,
+  request,
 }: Route.LoaderArgs): Promise<DashboardLoaderData> {
   const config = requireConfigStore(context).current();
   const checker = requireStatusChecker(context);
@@ -92,6 +101,8 @@ export async function loader({
       ]),
     ),
     recent: requireHistory(context).recent(),
+    // 通常フォーム送信の戻り先では、結果をクエリから組み立てる（NFR-09）。
+    result: parseResultQuery(new URL(request.url).search),
   };
 }
 
@@ -138,6 +149,296 @@ export type BatchOperationItemResult = OperationResult & {
   /** 実行しなかった理由（`skipped` のときだけ非 null）。 */
   readonly code: PowerOperationRecord['code'];
 };
+
+/**
+ * 通常フォーム送信のリダイレクトで運ぶ単体操作の結果（NFR-09）。
+ *
+ * 画面に出すのは操作の種別・結果・対象だけである（SEC-05, FR-07）。
+ */
+export type SingleResultQuery = {
+  readonly kind: 'single';
+  readonly operation: PowerOperation;
+  readonly result: OperationResultKind;
+  readonly target: string;
+};
+
+/**
+ * 通常フォーム送信のリダイレクトで運ぶ一括操作の結果（NFR-09, FR-11）。
+ *
+ * `results` と `summary` は fetcher 経由の応答（`BatchOperationResult`）と同じ形に
+ * して、画面の描画経路を 1 本に揃える。
+ */
+/**
+ * 一括操作の対象 1 件分の結果（表示用）。
+ *
+ * `code` を `string` で受けるのは、クエリは利用者が書き換えられるためである。
+ * 表示側は既知の語彙かどうかを確かめてから文言を引く。
+ */
+export type BatchResultItem = {
+  readonly target: string;
+  readonly operation: PowerOperation;
+  readonly result: OperationResultKind;
+  readonly code: string | null;
+};
+
+/**
+ * 通常フォーム送信のリダイレクトで運ぶ一括操作の結果（NFR-09, FR-11）。
+ *
+ * `results` と `summary` は fetcher 経由の応答（`BatchOperationResult`）と同じ形に
+ * して、画面の描画経路を 1 本に揃える。
+ */
+export type BatchResultQuery = {
+  readonly kind: 'batch';
+  readonly scope: BatchOperationScope;
+  readonly operation: PowerOperation;
+  readonly results: ReadonlyArray<BatchResultItem>;
+  readonly summary: BatchOperationResult['summary'];
+};
+
+/**
+ * 操作を受け付けられなかったときの結果表示（NFR-09）。
+ *
+ * 画面に出すのは固定の文言だけである。サーバーの自由文をクエリで持ち回らない
+ * （SEC-05）。
+ */
+export type ErrorQuery = {
+  readonly kind: 'error';
+  readonly reason: 'invalid_request' | 'targets_changed';
+};
+
+/** クエリから復元した操作の結果表示（単体・一括・失敗のいずれか）。 */
+export type ResultQuery = SingleResultQuery | BatchResultQuery | ErrorQuery;
+
+/** 失敗の理由の表示文言（`docs/architecture.md` 4 章の利用者向け文言）。 */
+const errorMessages: Record<ErrorQuery['reason'], string> = {
+  invalid_request:
+    '対象を確定できませんでした。画面を再読み込みしてから操作し直してください。',
+  targets_changed:
+    '対象が変わりました。画面を再読み込みしてから操作し直してください。',
+};
+
+/**
+ * 操作を受け付けられなかったときの `303` 応答。
+ *
+ * 通常フォーム送信でエラーをそのまま JSON で返すと、スクリプト無効時の画面に
+ * 生の応答が出る。固定の理由だけをクエリで運び、一覧画面に文言を組み立てさせる。
+ */
+function errorRedirectResponse(reason: ErrorQuery['reason']): Response {
+  return seeOther(`/?result=error&reason=${reason}`);
+}
+
+/**
+ * 一括操作の結果を 1 つのクエリ値へまとめる。
+ *
+ * 対象ごとの結果は `対象ID:種別[:理由]` を `;` で連結し、`URLSearchParams` で包む。
+ * 複数のクエリ項目に分けると、リダイレクトのたびに個数が変わって読み書きが複雑に
+ * なるため、1 項目に収める。
+ */
+function encodeBatchResult(query: BatchResultQuery): string {
+  const items = query.results.map((item) =>
+    [item.target, item.result, item.code ?? ''].join(':'),
+  );
+  return [
+    query.scope.type === 'all' ? 'all' : query.scope.id,
+    query.operation,
+    items.join(';'),
+  ].join('|');
+}
+
+/**
+ * 一括操作の結果を通常フォーム送信の応答（`303`）へ組み立てる。
+ *
+ * 戻り先の一覧画面はクエリから結果表示を組み立てるため、操作は再実行されない
+ * （Post/Redirect/Get, NFR-09）。
+ */
+function batchRedirectResponse(query: BatchResultQuery): Response {
+  return seeOther(
+    buildResultLocation(
+      encodeBatchResult(query),
+      query.summary,
+      query.results.length,
+    ),
+  );
+}
+
+/**
+ * 単体操作の結果を通常フォーム送信の応答（`303`）へ組み立てる。
+ *
+ * 対象 ID は定義に使える文字を制限していないため、クエリへ載せる前に必ず
+ * エスケープする（`app/lib/runtime-config.server.ts`）。
+ */
+function singleRedirectResponse(query: SingleResultQuery): Response {
+  return seeOther(
+    buildResultLocation(
+      [query.operation, query.result, query.target].join('|'),
+    ),
+  );
+}
+
+/**
+ * 一覧画面へ戻る `Location` を組み立てる。
+ *
+ * `URLSearchParams` が値のエスケープを行う。対象 ID に任意の文字を定義できるため、
+ * 自前で連結するとクエリの区切りと衝突して表示が壊れる。
+ */
+function buildResultLocation(
+  value: string,
+  summary?: BatchOperationResult['summary'],
+  itemCount?: number,
+): string {
+  const params = new URLSearchParams({ result: value });
+  if (summary !== undefined && itemCount !== undefined) {
+    params.set(
+      'summary',
+      [summary.ok, summary.failed, summary.skipped].join(','),
+    );
+    // 要約の件数と対象ごとの結果の個数が食い違うクエリは表示しない。
+    params.set('count', String(itemCount));
+  }
+  return `/?${params.toString()}`;
+}
+
+/**
+ * `Location` のクエリから結果表示を復元する（NFR-09）。
+ *
+ * 画面に出すのは結果種別と対象だけである（SEC-05）。未知の語彙・個数の合わない値は
+ * 結果を表示しない（`null`）。ここで操作を再実行することはない（Post/Redirect/Get）。
+ */
+export function parseResultQuery(search: string): ResultQuery | null {
+  const params = new URLSearchParams(search);
+  const raw = params.get('result');
+  if (raw === null) return null;
+
+  if (raw === 'error') {
+    const reason = params.get('reason');
+    if (reason !== 'invalid_request' && reason !== 'targets_changed') {
+      return null;
+    }
+    return { kind: 'error', reason };
+  }
+
+  // 一括操作の結果には必ず要約が付く。単体操作と一括操作はどちらも `result` の形が
+  // 「要素を `|` で並べたもの」なので、要約の有無で区別する。
+  return params.has('summary')
+    ? parseBatchQuery(raw, params.get('summary'), params.get('count'))
+    : parseSingleQuery(raw);
+}
+
+/** 単体操作のクエリ値「操作|種別|対象ID」を読む。 */
+function parseSingleQuery(raw: string): ResultQuery | null {
+  const parts = raw.split('|');
+  if (parts.length !== 3) return null;
+  const [operation, result, target] = parts;
+  const parsedOperation = parseOperation(operation);
+  const parsedResult = parseResultKind(result);
+  if (parsedOperation === null || parsedResult === null) return null;
+  if (target === undefined) return null;
+  return {
+    kind: 'single',
+    operation: parsedOperation,
+    result: parsedResult,
+    target,
+  };
+}
+
+/** 操作の語彙を読む。未知の値は結果を表示しない。 */
+function parseOperation(value: string | undefined): PowerOperation | null {
+  return value === 'wake' || value === 'shutdown' ? value : null;
+}
+
+/** 結果種別の語彙を読む。未知の値は結果を表示しない。 */
+function parseResultKind(
+  value: string | undefined,
+): OperationResultKind | null {
+  return value === 'succeeded' ||
+    value === 'failed' ||
+    value === 'rejected' ||
+    value === 'skipped'
+    ? value
+    : null;
+}
+
+/** 一括操作のクエリ値「範囲|操作|対象ID:種別[:理由];...」を読む。 */
+function parseBatchQuery(
+  raw: string,
+  rawSummary: string | null,
+  rawCount: string | null,
+): ResultQuery | null {
+  const [scope, operation, results] = raw.split('|');
+  const parsedOperation = parseOperation(operation);
+  if (
+    parsedOperation === null ||
+    scope === undefined ||
+    results === undefined
+  ) {
+    return null;
+  }
+
+  const scopeValue = parseScope(scope);
+  if (scopeValue === null) return null;
+
+  const items = results.length === 0 ? [] : results.split(';');
+  const parsedItems: BatchResultItem[] = [];
+  for (const item of items) {
+    const parsed = parseBatchItem(item, parsedOperation);
+    if (parsed === null) return null;
+    parsedItems.push(parsed);
+  }
+
+  const summary = parseSummary(rawSummary);
+  if (summary === null) return null;
+
+  // 要約と対象ごとの結果が食い違うクエリ（手で書き換えた URL など）は表示しない。
+  if (Number(rawCount) !== parsedItems.length) return null;
+
+  return {
+    kind: 'batch',
+    scope: scopeValue,
+    operation: parsedOperation,
+    results: parsedItems,
+    summary,
+  };
+}
+
+/** 一括操作の範囲を読む。`all` は全台、それ以外はグループ ID として扱う。 */
+function parseScope(value: string): BatchOperationScope | null {
+  if (value === 'all') return { type: 'all' };
+  return value.length === 0 ? null : { type: 'group', id: value };
+}
+
+/** 一括操作の対象 1 件分「対象ID:種別[:理由]」を読む。 */
+function parseBatchItem(
+  raw: string,
+  operation: PowerOperation,
+): BatchResultItem | null {
+  const [target, result, code] = raw.split(':');
+  const parsedResult = parseResultKind(result);
+  if (target === undefined || parsedResult === null) return null;
+  return {
+    target,
+    operation,
+    result: parsedResult,
+    // 理由は表示のためだけに持ち回る。未知の語彙は表示側で落とす。
+    code: code === undefined || code === '' ? null : code,
+  };
+}
+
+/** 要約「成功,失敗,スキップ」を読む。 */
+function parseSummary(
+  raw: string | null,
+): BatchOperationResult['summary'] | null {
+  if (raw === null) return null;
+  const parts = raw.split(',').map(Number);
+  if (parts.length !== 3) return null;
+  const [ok, failed, skipped] = parts;
+  if (ok === undefined || failed === undefined || skipped === undefined) {
+    return null;
+  }
+  if (![ok, failed, skipped].every((n) => Number.isInteger(n) && n >= 0)) {
+    return null;
+  }
+  return { ok, failed, skipped };
+}
 
 /**
  * 一括操作の action が成功時に返す結果（FR-11）。
@@ -242,29 +543,33 @@ export function toResultKind(
  * 場合は `400` を返す（画面には結果を出さない）。結果は対象 ID と種別だけを返し、
  * `fetcher.data` としてその行に表示する。
  *
- * スクリプト無効時のフォーム送信（`303` で一覧へ戻る PRG）は別チケット（t012）の領分で
- * あり、ここでは fetcher 向けの JSON 応答だけを扱う。
+ * スクリプト無効時の通常フォーム送信には `303` で `/?result=...` へ戻し、一覧画面が
+ * クエリから結果を組み立てる（Post/Redirect/Get, NFR-09）。応答の種別は `Accept` で
+ * 決める（`app/lib/form-submission.server.ts`）。
  */
 export async function action({ request, context }: Route.ActionArgs) {
   const form = await request.formData();
   const intent = form.get('intent');
+  const formSubmission = isFormSubmission(request);
 
   if (intent === 'wake-group' || intent === 'shutdown-group') {
     return runBatch(
       form,
       context,
       intent === 'wake-group' ? 'wake' : 'shutdown',
+      formSubmission,
     );
   }
 
   const config = requireConfigStore(context).current();
   const target = form.get('target');
 
-  if (intent !== 'wake' && intent !== 'shutdown') return badRequest();
-  if (typeof target !== 'string') return badRequest();
+  if (intent !== 'wake' && intent !== 'shutdown')
+    return badRequest(formSubmission);
+  if (typeof target !== 'string') return badRequest(formSubmission);
 
   const server = config.servers.find((candidate) => candidate.id === target);
-  if (server === undefined) return badRequest();
+  if (server === undefined) return badRequest(formSubmission);
 
   const record = await requireOperator(context).operate(
     server.id,
@@ -274,10 +579,21 @@ export async function action({ request, context }: Route.ActionArgs) {
     requireSshRuntime(context),
   );
 
+  const result = toResultKind(record);
+
+  if (formSubmission) {
+    return singleRedirectResponse({
+      kind: 'single',
+      target: server.id,
+      operation: intent,
+      result,
+    });
+  }
+
   const body: OperationResult = {
     target: server.id,
     operation: intent,
-    result: toResultKind(record),
+    result,
   };
 
   return jsonResponse(body);
@@ -297,6 +613,7 @@ async function runBatch(
   form: FormData,
   context: RouterContextProviderLike,
   operation: PowerOperation,
+  formSubmission: boolean,
 ): Promise<Response> {
   const config = requireConfigStore(context).current();
   const rawScopeKind = form.get('scopeKind');
@@ -310,18 +627,19 @@ async function runBatch(
     scope = { type: 'all' };
   } else if (rawScopeKind === 'group') {
     if (typeof rawScopeId !== 'string' || rawScopeId.length === 0) {
-      return batchFailure(...invalidBatch);
+      return batchFailure(...invalidBatch, formSubmission);
     }
     if (!config.groups.some((group) => group.id === rawScopeId)) {
-      return batchFailure(...invalidBatch);
+      return batchFailure(...invalidBatch, formSubmission);
     }
     scope = { type: 'group', id: rawScopeId };
   } else {
-    return batchFailure(...invalidBatch);
+    return batchFailure(...invalidBatch, formSubmission);
   }
 
   const targets = resolveBatchTargets(config.servers, scope);
-  if (targets.length === 0) return batchFailure(...invalidBatch);
+  if (targets.length === 0)
+    return batchFailure(...invalidBatch, formSubmission);
 
   // 確認ダイアログに出した集合と、いま確定した集合が一致するかを照合する。確認のあとで
   // 設定が再読込されたり対象の所属が変わったりしても、利用者が承認していないサーバーを
@@ -333,7 +651,7 @@ async function runBatch(
     const sameSet =
       confirmed.length === current.length &&
       current.every((id) => confirmed.includes(id));
-    if (!sameSet) return batchFailure(...targetsChanged);
+    if (!sameSet) return batchFailure(...targetsChanged, formSubmission);
   }
 
   const outcome = await requireOperator(context).operateAll(
@@ -343,16 +661,28 @@ async function runBatch(
     requireSshRuntime(context),
   );
 
+  const results: BatchOperationItemResult[] = outcome.records.map((record) => ({
+    target: record.target.id,
+    operation: record.operation,
+    result: toResultKind(record, 'batch'),
+    // `skipped` の理由（`busy` など）を画面まで運ぶ（docs/architecture.md 6.4）。
+    code: record.code,
+  }));
+
+  if (formSubmission) {
+    return batchRedirectResponse({
+      kind: 'batch',
+      scope,
+      operation,
+      results,
+      summary: outcome.summary,
+    });
+  }
+
   const body: BatchOperationResult = {
     target: scope,
     operation,
-    results: outcome.records.map((record) => ({
-      target: record.target.id,
-      operation: record.operation,
-      result: toResultKind(record, 'batch'),
-      // `skipped` の理由（`busy` など）を画面まで運ぶ（docs/architecture.md 6.4）。
-      code: record.code,
-    })),
+    results,
     summary: outcome.summary,
   };
 
@@ -404,7 +734,12 @@ function batchFailure(
   error: BatchOperationFailure['error'],
   message: string,
   status: number,
+  formSubmission: boolean,
 ): Response {
+  // 通常フォーム送信には JSON を返さない。固定の理由をクエリで運び、一覧画面に
+  // 文言を組み立てさせる（NFR-09）。
+  if (formSubmission) return errorRedirectResponse(error);
+
   const body: BatchOperationFailure = { error, message };
   return new Response(JSON.stringify(body), {
     status,
@@ -415,8 +750,15 @@ function batchFailure(
   });
 }
 
-/** 対象・種別が不正な要求。定義に無いサーバー ID もここに落とす。 */
-function badRequest(): Response {
+/**
+ * 対象・種別が不正な要求。定義に無いサーバー ID もここに落とす。
+ *
+ * 通常フォーム送信では `303` で戻す。結果の種別だけを表示し、対象は出さない
+ * （定義に無い ID を画面に映さない）。
+ */
+function badRequest(formSubmission: boolean): Response {
+  if (formSubmission) return errorRedirectResponse('invalid_request');
+
   return new Response(JSON.stringify({ error: 'invalid_request' }), {
     status: 400,
     headers: {
@@ -489,7 +831,22 @@ export function toReasonLabel(record: {
 }): string | null {
   if (record.result !== 'skipped') return null;
   if (record.code === null) return null;
-  return skipReasonLabels[record.code] ?? null;
+  return skipReasonLabel(record.code);
+}
+
+/**
+ * 実行しなかった理由の文言を引く。
+ *
+ * クエリ由来の理由は利用者が書き換えられるため、既知の語彙でなければ `null` を返し、
+ * 内部の文字列を画面へ出さない（SEC-05）。
+ */
+function skipReasonLabel(code: string): string | null {
+  return isSkipReasonCode(code) ? skipReasonLabels[code] : null;
+}
+
+/** 実行しなかった理由の語彙かどうか。 */
+function isSkipReasonCode(code: string): code is PowerOperationCode {
+  return Object.hasOwn(skipReasonLabels, code);
 }
 
 /** 状態取得のリソースルートのパス（FR-02）。 */
@@ -958,6 +1315,58 @@ function BatchControls({
   );
 }
 
+/**
+ * 通常フォーム送信（スクリプト無効時）の結果表示（NFR-09, FR-07）。
+ *
+ * クエリから組み立てた結果種別と対象だけを出す。行内の結果表示（`ServerRow`）は
+ * `fetcher.data` を読むため、ページ全体を読み直す通常フォーム送信では使えない。
+ * ここで操作を再実行することはない（Post/Redirect/Get）。
+ */
+function ResultNotice({
+  result,
+  names,
+}: {
+  result: ResultQuery;
+  names: ReadonlyMap<string, string>;
+}) {
+  if (result.kind === 'error') {
+    return (
+      <div role="alert">
+        <p>{errorMessages[result.reason]}</p>
+      </div>
+    );
+  }
+
+  if (result.kind === 'single') {
+    return (
+      <p role="status">
+        {names.get(result.target) ?? result.target}:{' '}
+        {operationLabels[result.operation]}: {resultLabels[result.result]}
+      </p>
+    );
+  }
+
+  return (
+    <div role="status">
+      <p>
+        {result.summary.ok} 件成功 / {result.summary.failed} 件失敗 /{' '}
+        {result.summary.skipped} 件スキップ
+      </p>
+      <ul>
+        {result.results.map((item) => (
+          <li key={item.target}>
+            {names.get(item.target) ?? item.target}: {resultLabels[item.result]}
+            {/* 実行しなかった理由は語彙ではなく日本語で添える（docs/architecture.md 6.4）。 */}
+            {item.result === 'skipped' && item.code !== null
+              ? (skipReasonLabel(item.code) ?? '')
+              : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default function Dashboard({ loaderData }: Route.ComponentProps) {
   const statusFetcher = useFetcher<StatusResponse>();
   const historyFetcher = useFetcher<HistoryResponse>();
@@ -982,6 +1391,9 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
   return (
     <section>
       <h2>サーバー一覧</h2>
+      {loaderData.result === null ? null : (
+        <ResultNotice result={loaderData.result} names={serverNames} />
+      )}
       {loaderData.servers.length === 0 ? null : (
         <section aria-label="全台一括">
           <h3>すべてのサーバー</h3>

@@ -37,6 +37,7 @@ function loaderData(
     groups: [{ id: 'storage', name: 'ストレージ' }],
     states: { nas: 'online', 'test-01': 'offline' },
     recent: [],
+    result: null,
     ...overrides,
   };
 }

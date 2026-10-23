@@ -20,6 +20,7 @@ function loaderData(
 ): SettingsLoaderData {
   return {
     configPath: '/etc/power-manager/config.json',
+    reloadResult: null,
     servers: [
       {
         id: 'nas',
