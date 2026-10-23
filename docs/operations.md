@@ -444,9 +444,34 @@ Nix のジョブはアーキテクチャごとにネイティブのホストラ�
 | 排他制御         | 実行中の同一対象への操作拒否、結果種別の区別、一括時の `busy` スキップと部分失敗の要約                         |
 | 死活確認         | 3 状態の判定、同時実行数（固定 8）の上限、進行中確認の共有                                                     |
 | 実行結果         | リングバッファの上限 100 件、古い要素の破棄                                                                    |
-| 画面             | 出力エスケープ、行内の進行表示、スクリプト無効時のフォーム動作（`createRoutesStub`）                          |
+| 画面             | 出力エスケープ、行内の進行表示、確認ページの対象列挙、スクリプト無効時のフォーム動作（`createRoutesStub`）      |
 
 実際の WOL 送信、SSH 接続、VPN・リバースプロキシ経由のアクセスは、ホームラボ上での手動受け入れテストとする。
+
+### 7.1 受け入れ基準との対応
+
+[要件定義](requirements.md) 9 章の 16 項目を、自動テストで担保できる範囲とホームラボでの手動確認が必要な範囲に分ける。手動確認の具体的な操作は 8 章の番号で示す。分類は「自動」「一部手動」（操作の前後は自動テストで担保し、実機の電源・SSH・ネットワークだけを手動で見る）、「手動」の 3 種である。
+
+| #   | 受け入れ基準                                     | 分類     | 担保するテスト / 手順                                                                                                                                                                                                                      |
+| --- | ------------------------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | 認証なしはアクセス不可、`/healthz` のみ免除       | 自動     | `test/middleware.test.ts`（401・`WWW-Authenticate`・`/healthz` 免除）、`npm run smoke`（実プロセスで 401・誤資格情報でも 401・`/healthz` が `ok`）                                                                                        |
+| 2   | 一覧表示と 15 秒更新、非表示で停止・再表示で更新 | 自動     | `test/dashboard.test.ts`（一覧と初期状態）、`test/dashboard-screen.test.tsx`（周期は 15 秒固定・非表示で停止し再表示で即 1 回取得）、`test/status-checker.test.ts`                                                                          |
+| 3   | 起動操作で `online` になる                        | 一部手動 | 自動: `test/power.test.ts`（Magic Packet 102 バイトの実送信・実行中の拒否・結果の記録）、`test/status-checker.test.ts`（`online`/`offline` の判定）、`test/dashboard.test.ts`（起動は確認を挟まない）。実機の起動は 8 章 8            |
+| 4   | 停止は確認のうえ実行し `offline` になる           | 一部手動 | 自動: `test/routes.test.tsx`（確認ページが対象の表示名と承諾値を出す）、`test/dashboard.test.ts`（確認を経ない停止の差し戻し・承諾集合の一致）、`test/power.test.ts`（SSH 引数・終了コード・タイムアウト）、`test/status-checker.test.ts`（`offline` の判定）。実機の停止は 8 章 9 |
+| 5   | URL 不変・全再読込みなし・行内の進行表示          | 自動     | `test/dashboard-screen.test.tsx`（操作しても URL と loader の再実行なし・送信中は対象行に「実行中」・完了後は結果）、`test/dashboard.test.ts`（`fetcher` は JSON、通常フォームは 303）                                                     |
+| 6   | 一括操作と要約（成功 / 失敗 / スキップ）          | 自動     | `test/power.test.ts`（対象集合の解決・`busy` を `skipped`・部分失敗を全体の失敗に読み替えない）、`test/dashboard.test.ts`（要約と対象ごとの結果）、`test/dashboard-screen.test.tsx`                                                       |
+| 7   | 一括停止の確認は 1 回、表示名を列挙               | 自動     | `test/routes.test.tsx`（`/confirm` が対象を全件列挙し、`scopeKind`・`scopeId`・承諾値だけを送る）、`test/dashboard.test.ts`（確認した集合と確定した集合が違えば 409）、`test/dashboard-screen.test.tsx`（一覧画面は承諾値を送らない）   |
+| 8   | 予約が指定時刻から 10 秒以内に実行される          | 一部手動 | 自動: `test/schedule.test.ts`（次回時刻の計算・10 秒以内なら実行・しきい値が 10 秒）。実時刻での観測は 8 章 12                                                                                                                          |
+| 9   | 実行中の予約は `busy` でスキップし理由を表示      | 自動     | `test/schedule.test.ts`（待たずにスキップ・`schedule_skip` の記録）、`test/dashboard.test.ts`（理由の語彙）、`test/dashboard-screen.test.tsx`（理由を日本語で表示）                                                                       |
+| 10  | 停止中に過ぎた予約は実行せず、二重実行もない      | 一部手動 | 自動: `test/schedule.test.ts`（10 秒超は `missed`・同時刻の 2 予約が各 1 回・再読込で再記録しない）。サービス停止を挟む確認は 8 章 14                                                                                                      |
+| 11  | 不正な設定の再読込は旧設定で継続し失敗を表示      | 自動     | `test/config-store.test.ts`（失敗時は旧設定を維持・相互参照・JSON 破損）、`test/settings.test.ts`（失敗は種別だけ返し理由はログへ）、`test/settings-screen.test.tsx`                                                                     |
+| 12  | 不正な設定で起動すると待受せず終了する            | 自動     | `test/startup.test.ts`（終了コード 78・`startup_failed` 1 行）、`test/config.test.ts`（環境変数の検証）、`npm run smoke`（78 で終了し `started` を出さない）                                                                              |
+| 13  | 同一サーバーへの二重操作を拒否し表示する          | 自動     | `test/power.test.ts`（`busy` の拒否・同時実行数 8 の上限）、`test/dashboard-screen.test.tsx`（「実行中（拒否）」の表示）                                                                                                                    |
+| 14  | 再起動後は設定のみから復帰し「最近の実行」は空    | 一部手動 | 自動: `test/history.test.ts`（プロセス内リングバッファのみ・上限 100 件・永続化なし）、`test/startup.test.ts`（起動時に読むのは環境変数と設定 JSON だけ）、`test/dashboard-screen.test.tsx`（空のときの表示）。再起動は 8 章 14      |
+| 15  | VPN 外からは到達不可、VPN 内からは TLS で利用可能 | 手動     | 8 章 6・19。アプリ側の前提は `server/index.ts` の `server.listen(runtime.port, '127.0.0.1')`（loopback のみで待受）と、TLS をリバースプロキシで終端する構成                       |
+| 16  | スクリプト無効でも一覧・起動・停止・再読込が可能  | 自動     | `test/dashboard.test.ts`（303 で結果を載せた一覧へ戻す）、`test/settings.test.ts`（再読込も 303）、`test/dashboard-screen.test.tsx`、`test/routes.test.tsx`（SSR で一覧が描画される）                                                     |
+
+自動テストで担保できていないのは、実際の電源操作・SSH 接続・ネットワーク到達性・サービス再起動に依存する項目だけである。これらは 8 章の手順で確認する。
 
 ## 8. 手動受け入れ手順
 
