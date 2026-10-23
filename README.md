@@ -25,6 +25,39 @@ npm run start        # ビルド成果物を Node.js で起動
 npm run smoke        # build 後に起動と HTML 応答を確認
 ```
 
+### 開発サーバーの起動手順
+
+`npm run dev` は環境変数がすべて揃っていないと起動時に終了コード `78` で止まります。ローカルでは次の 2 つを用意します。
+
+1. 管理対象設定は同梱の `dev/config.json` を使います（既定値の適用例と daily / weekly の予約入り）。
+2. 環境変数は `.example.envrc` を雛形に `.envrc` などへ置きます。最低限、次の値を設定してください。
+
+```sh
+export NODE_ENV=development
+export POWER_MANAGER_CONFIG_PATH="$PWD/dev/config.json"
+export POWER_MANAGER_PORT=5173
+export POWER_MANAGER_PUBLIC_ORIGIN="http://localhost:5173"
+export POWER_MANAGER_AUTH_USERNAME=admin
+export POWER_MANAGER_AUTH_PASSWORD_HASH='$argon2id$...'   # 下記の手順で生成
+export POWER_MANAGER_SSH_IDENTITY_FILE="$PWD/.local/dev_ssh_key"
+export POWER_MANAGER_SSH_KNOWN_HOSTS_FILE="$PWD/.local/known_hosts"
+```
+
+- `POWER_MANAGER_SSH_*` は開発中は実在する通常ファイル（例: `package.json`）でも構いません。起動時の検証はパスの形式だけを見ます。
+- `POWER_MANAGER_PUBLIC_ORIGIN` は開発時のみ `localhost` の HTTP Origin を許可します（`http://127.0.0.1:5173` は不可）。
+- パスワードハッシュはアプリケーションでは生成しません。次のように作ります。
+
+```sh
+echo -n 'パスワード' | argon2 "$(head -c16 /dev/urandom | base64)" -id -e
+```
+
+起動すると `http://localhost:5173` で待ち受け、画面は Basic 認証を求めます（未認証は 401）。`/healthz` だけは認証なしで `ok` を返します。
+
+```sh
+curl -i http://localhost:5173/          # 401 + WWW-Authenticate
+curl -i http://localhost:5173/healthz   # 200 ok
+```
+
 画面は React Router 8 の Framework Mode（SSR）で実装し、`app/` に画面とルート定義、`server/` に HTTP サーバーのエントリを置きます。
 
 スタイルは Tailwind CSS 4 のユーティリティクラスを JSX に直接記述し、配色・フォントなどの共通トークンだけを `app/app.css` の `@theme` で定義します。
