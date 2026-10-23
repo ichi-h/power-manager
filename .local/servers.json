@@ -1,9 +1,10 @@
 {
-  "version": 1,
+  "version": 2,
   "servers": [
     {
       "id": "local-test",
       "name": "ローカル確認用サーバー",
+      "groups": [],
       "macAddress": "00:11:22:33:44:55",
       "wol": {
         "broadcastAddress": "127.0.0.1",
@@ -16,5 +17,7 @@
         "shutdownCommand": "sudo systemctl poweroff"
       }
     }
-  ]
+  ],
+  "groups": [],
+  "schedules": []
 }
