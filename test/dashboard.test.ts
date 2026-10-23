@@ -403,6 +403,113 @@ describe('一覧画面の action', () => {
     expect(location.searchParams.get('reason')).toBe('invalid_request');
   });
 
+  test('単体操作の 303 Location で loader を呼ぶと、結果を復元して表示できる（NFR-09）', async () => {
+    const { args } = actionArgs(
+      { intent: 'shutdown', target: 'nas' },
+      { accept: 'text/html' },
+    );
+
+    const response = (await action(args)) as Response;
+    expect(response.status).toBe(303);
+
+    const location = response.headers.get('location') ?? '';
+    const data = await loader({
+      context: loaderContext({}),
+      params: {},
+      request: new Request(`http://localhost${location}`),
+    } as never);
+
+    expect(data.result).toEqual({
+      kind: 'single',
+      operation: 'shutdown',
+      result: 'succeeded',
+      target: 'nas',
+    });
+  });
+
+  test('区切り文字入り ID でも 303 の往復で結果を復元できる（NFR-09）', async () => {
+    const config = twoServerConfig();
+    config.servers[0]!.id = 'nas:1';
+    config.servers[0]!.name = 'NAS 1';
+    config.servers[1]!.id = 'nas;1';
+    config.servers[1]!.name = 'NAS 2';
+
+    const cases: ReadonlyArray<{
+      readonly fields: Record<string, string | undefined>;
+      readonly expected: Record<string, unknown>;
+    }> = [
+      {
+        fields: { intent: 'shutdown', target: 'nas:1' },
+        expected: {
+          kind: 'single',
+          operation: 'shutdown',
+          result: 'succeeded',
+          target: 'nas:1',
+        },
+      },
+      {
+        fields: { intent: 'shutdown', target: 'nas;1' },
+        expected: {
+          kind: 'single',  // 単体はセミコロンを使わないため復元できる
+          operation: 'shutdown',
+          result: 'succeeded',
+          target: 'nas;1',
+        },
+      },
+      {
+        fields: {
+          intent: 'wake-group',
+          scopeKind: 'group',
+          scopeId: 'nas|x',
+        },
+        expected: {
+          kind: 'batch',
+          scope: { type: 'group', id: 'nas|x' },
+          operation: 'wake',
+          results: [
+            {
+              target: 'nas:1',
+              operation: 'wake',
+              result: 'succeeded',
+              code: null,
+            },
+          ],
+          summary: { ok: 1, failed: 0, skipped: 0 },
+        },
+      },
+    ];
+
+    for (const [index, testCase] of cases.entries()) {
+      const config = twoServerConfig();
+      config.servers[0]!.id = 'nas:1';
+      config.servers[0]!.name = 'NAS 1';
+      config.servers[1]!.id = 'nas;1';
+      config.servers[1]!.name = '事前準備で変更したサーバー';
+      if (index === 2) {
+        // サーバー 0 台は「groups に所属するサーバーが無い」として検証を通らないため、
+        // nas:1 を nas|x に所属させる。nas:1 は区切り文字入りで target に使う。
+        config.groups = [{ id: 'nas|x', name: 'パイプ入りのグループ' }];
+        config.servers[0]!.groups = ['nas|x'];
+        config.servers = [config.servers[0]!];
+      }
+
+      const { args } = actionArgs(testCase.fields, {
+        accept: 'text/html',
+        config,
+      });
+      const response = (await action(args)) as Response;
+      expect(response.status, `case ${index}`).toBe(303);
+
+      const location = response.headers.get('location') ?? '';
+      const data = await loader({
+        context: loaderContext({ config }),
+        params: {},
+      request: new Request(`http://localhost${location}`),
+      } as never);
+      expect(data.result, `case ${index}`).toEqual(testCase.expected);
+    }
+  });
+
   test('未知のサーバー ID・未知の intent は操作せず 400 を返す', async () => {
     const cases: ReadonlyArray<Record<string, string | undefined>> = [
       { intent: 'wake', target: 'unknown-server' },
