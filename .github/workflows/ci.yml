@@ -6,7 +6,8 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  check:
+    name: 型検査・テスト・ビルド（Node.js 24）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,18 +15,40 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
-      - run: npm run check
+
+      # `npm ci` は `package.json` と `package-lock.json` の不整合（欠落・余剰・
+      # バージョン不一致）で失敗する。ここで落ちた場合は lock を更新して push する。
+      - name: 依存の導入（lock ファイルの不整合も検出する）
+        run: npm ci
+
+      # 型検査（`react-router typegen && tsc --noEmit`）
+      - run: npm run typecheck
+
+      # ユニットテストと HTTP 結合テスト（`vitest run`）
+      - run: npm run test
+
+      # カバレッジの閾値（vite.config.ts の `test.coverage.thresholds`）を下回れば失敗する。
       - run: npm run coverage
+
+      # 起動スモーク（バンドル済みエントリでの待受・終了コード）
       - run: npm run build
       - run: npm run smoke
 
   nix:
+    name: Nix ビルド（${{ matrix.system }}）
     strategy:
+      fail-fast: false
       matrix:
         system: [x86_64-linux, aarch64-linux]
+    # `aarch64-linux` は ARM のホストランナー上でネイティブにビルドする。
     runs-on: ${{ matrix.system == 'aarch64-linux' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@v31
+
+      # 既定パッケージ（`package.nix`）をビルドする。`doInstallCheck` が配置物と
+      # 設定不備時の終了コードまで検証する。
       - run: nix build .#packages.${{ matrix.system }}.default
+
+      # NixOS モジュールを実際の構成として評価するチェック（docs/operations.md 6.1）。
+      - run: nix build .#checks.${{ matrix.system }}.nixos-module
