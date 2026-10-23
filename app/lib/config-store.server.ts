@@ -149,9 +149,14 @@ export function createConfigStore(
         error instanceof ManagedConfigError
           ? error.issues
           : ['設定を読み込めませんでした'];
+      // 非 ManagedConfigError の例外メッセージは入力の断片を含み得るため、
+      // そのままログへ流さない（SEC-05, チケット 5859 のテストが検出）。
       return {
         ok: false,
-        reason: error instanceof Error ? error.message : String(error),
+        reason:
+          error instanceof ManagedConfigError
+            ? error.message
+            : '設定の再読込に失敗しました',
         issues,
       };
     }

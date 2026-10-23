@@ -5,8 +5,8 @@
  * ここでは jsdom 上で、画面遷移を起こさずに進行中・結果だけが出ることを確かめる。
  */
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
-import { createRoutesStub } from 'react-router';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { createRoutesStub, Outlet, useLocation } from 'react-router';
 import { afterEach, describe, expect, test } from 'vitest';
 
 import Settings, {
@@ -118,6 +118,97 @@ describe('設定画面の描画', () => {
   });
 });
 
+describe('再読込後の loader 再検証と URL（FR-07, FR-14）', () => {
+  test('action 後に loader が再実行され、一覧が更新後のデータに出し替わる', async () => {
+    let reloadCount = 0;
+    const first = loaderData();
+    const second = loaderData({
+      schedules: [
+        {
+          id: 'added-schedule',
+          name: '追加された予約',
+          enabled: true,
+          operation: '起動',
+          target: 'サーバー NAS',
+          repeat: '毎日 06:30',
+        },
+      ],
+    });
+    // createRoutesStub の jsdom 環境では `window.location` と Router の内部
+    // location が一致しないため、`useLocation` 経由で観測する。
+    let observedPathname: string | null = null;
+    function LocationProbe() {
+      observedPathname = useLocation().pathname;
+      return null;
+    }
+    // `useLocation` を観測するため、Settings をラップする Component を置く
+    // （createRoutesStub は route.element を無視するため Component で渡す）。
+    function SettingsWithProbe() {
+      return (
+        <>
+          <LocationProbe />
+          <Settings
+            {...({ loaderData: loaderData() } as unknown as React.ComponentProps<typeof Settings>)}
+          />
+        </>
+      );
+    }
+    const Stub = createRoutesStub([
+      {
+        path: '/settings',
+        Component: SettingsWithProbe,
+        // 1 回目は初期描画、action 後の再検証（2 回目）で別データを返す。
+        loader: () => (reloadCount++ === 0 ? first : second),
+        action: () => ({ result: 'succeeded', schedules: 1 }),
+      },
+    ]);
+    render(<Stub initialEntries={['/settings']} />);
+
+    expect(await screen.findByText('夜間停止')).toBeDefined();
+    expect(screen.queryByText('追加された予約')).toBeNull();
+
+    (await screen.findByText('定義を再読込')).click();
+
+    // action 後に loader が再検証され、一覧が更新後のデータに差し替わる。
+    expect(await screen.findByText('追加された予約')).toBeDefined();
+    expect(screen.queryByText('夜間停止')).toBeNull();
+    // 再読込は画面遷移を起こさない（FR-14, 受け入れ基準 5）。
+    expect(observedPathname).toBe('/settings');
+  });
+
+  test('再読込後も URL が /settings のままである', async () => {
+    let observedPathname: string | null = null;
+    function LocationProbe() {
+      observedPathname = useLocation().pathname;
+      return null;
+    }
+    function SettingsWithProbe() {
+      return (
+        <>
+          <LocationProbe />
+          <Settings
+            {...({ loaderData: loaderData() } as unknown as React.ComponentProps<typeof Settings>)}
+          />
+        </>
+      );
+    }
+    const Stub = createRoutesStub([
+      {
+        path: '/settings',
+        Component: SettingsWithProbe,
+        loader: () => loaderData(),
+        action: () => ({ result: 'succeeded', schedules: 1 }),
+      },
+    ]);
+    render(<Stub initialEntries={['/settings']} />);
+
+    (await screen.findByText('定義を再読込')).click();
+
+    expect(await screen.findByText('再読込: 成功')).toBeDefined();
+    expect(observedPathname).toBe('/settings');
+  });
+});
+
 describe('再読込の進行表示と結果', () => {
   test('開始直後から進行中を表示し、完了後は結果種別を出す', async () => {
     let finish: (payload: ReloadPayload) => void = () => {};
@@ -145,14 +236,16 @@ describe('再読込の進行表示と結果', () => {
 
   test('失敗のときは失敗という結果種別だけを出す', async () => {
     renderSettings(loaderData(), {
-      action: () => ({ result: 'failed' }),
+      // 実装が reason を画面へ出してしまえば、この文言が画面に現れる。
+      action: () => ({ result: 'failed', reason: '検証に失敗しました' }) as never,
     });
 
     (await screen.findByText('定義を再読込')).click();
 
     expect(await screen.findByText('再読込: 失敗')).toBeDefined();
-    // 失敗理由（内部メッセージ）は画面に出さない（FR-07, SEC-05）。
-    expect(document.body.textContent).not.toContain('検証');
+    // 失敗理由（内部メッセージ）は画面に出さない（FR-07, SEC-05）。スタブ応答に
+    // 理由を含めて、画面側が捨てていることを空振りなしに確かめる（チケット 5859）。
+    expect(document.body.textContent).not.toContain('検証に失敗しました');
   });
 
   test('予約実行器が無いときも結果種別だけを出す', async () => {
@@ -173,8 +266,12 @@ describe('再読込の進行表示と結果', () => {
 
     (await screen.findByText('定義を再読込')).click();
 
-    // 送信が終わったことを待つ（進行中の表示が消える）。
+    // 送信が終わったことを、進行中の表示が消えることで待つ。ボタンは常時描画のため
+    // `定義を再読込` の再検出では完了を待てない（チケット 5859）。
     await screen.findByText('定義を再読込');
+    await waitFor(() => {
+      expect(screen.queryByText('再読込中')).toBeNull();
+    });
     expect(screen.queryByText(/再読込:/)).toBeNull();
   });
 });

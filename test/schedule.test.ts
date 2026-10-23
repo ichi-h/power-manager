@@ -571,6 +571,31 @@ describe('createScheduleRunner（j002, j004, j005）', () => {
     void runner.stop();
   });
 
+  test('初期化で記録した missed_schedule が再読込で重複しない（bd05, チケット 5859）', () => {
+    // 本日分が既に過ぎた予約 1 件で初期化する。初期化時は missed_schedule が
+    // 記録され、その後の replacePlans では再記録されない（記録は初期化の 1 回限り）。
+    const config = configWithSchedules([
+      validSchedule({ target: { type: 'server', id: 'nas' } }),
+    ]);
+    const { deps, records, setNow } = makeDeps();
+    setNow(jst('2025-06-01T23:31:00'));
+    const runner = createScheduleRunner(config, deps);
+    // 初期化時に 1 件だけ記録される。
+    expect(records.filter((r) => r.event === 'schedule_skip')).toHaveLength(1);
+    // 再読込を重ねても重複記録は増えない（review-t003 の申し送りの固定）。
+    runner.replacePlans(config);
+    runner.replacePlans(config);
+    const skips = records.filter((r) => r.event === 'schedule_skip');
+    expect(skips).toHaveLength(1);
+    expect(skips[0]?.record.scheduleId).toBe('night-shutdown');
+    expect(skips[0]?.record.code).toBe('missed_schedule');
+    // 次回時刻は翌日へ前進している（当日分の再実行はしない）。
+    expect(runner.plans()[0]?.nextRunAt.toISOString()).toBe(
+      '2025-06-02T14:30:00.000Z',
+    );
+    void runner.stop();
+  });
+
   test('replacePlans は missed_schedule を再記録しない（bd05）', () => {
     const config = configWithSchedules([validSchedule()]);
     const { deps, records, setNow } = makeDeps();

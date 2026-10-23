@@ -10,6 +10,7 @@ import {
 } from '../app/lib/config-store.server.ts';
 
 import { validManagedConfig, validSchedule } from './support/managed-config.ts';
+import type { ManagedConfig } from '../app/lib/model.ts';
 
 /**
  * 設定ストアは「読み込む → 検証する → 成功時だけ差し替える」の順序が仕様である
@@ -80,6 +81,67 @@ describe('起動時の読込み', () => {
     await expect(loadManagedConfigForStartup(configPath)).rejects.toThrow(
       /^管理対象の設定が不正です（JSON として解釈できません）$/,
     );
+  });
+});
+
+describe('並行再読込の直列化', () => {
+  // review-t003 の申し送り（チケット 5859）: 2 本の reload が重なっても
+  // 「読込み → 検証 → 差し替え」が 1 本ずつ走ることを遅延注入で固定する。
+  test('遅い 1 回目と速い 2 回目は到着順に処理され、最後は後の定義になる', async () => {
+    const configStore = await store();
+    const first = validManagedConfig();
+    (first.servers as Record<string, unknown>[])[0]!.name = '遅い再読込';
+    const second = validManagedConfig();
+    (second.servers as Record<string, unknown>[])[0]!.name = '速い再読込';
+
+    let releaseFirst: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let call = 0;
+    // load を差し替えたストアを作り直す（1 回目を遅らせる）。
+    const deferred = createConfigStore(
+      configPath,
+      await loadManagedConfigForStartup(configPath),
+      async (_configPath: string) => {
+        call += 1;
+        if (call === 1) await gate;
+        return (call === 1 ? first : second) as unknown as ManagedConfig;
+      },
+    );
+
+    const firstReload = deferred.reload();
+    const secondReload = deferred.reload();
+    // 2 回目の reload は 1 回目の完了を待つ。ここでは 1 回目が止まっているため、
+    // どちらも解決しない（直列化の観測）。
+    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
+    expect(deferred.current().servers[0]?.name).toBe('NAS');
+    releaseFirst?.();
+
+    const results = await Promise.all([firstReload, secondReload]);
+    expect(results.map((r) => r.ok)).toEqual([true, true]);
+    // 到着順に処理されるため、最後は 2 回目の定義に差し替わる。
+    expect(deferred.current().servers[0]?.name).toBe('速い再読込');
+  });
+
+  test('失敗した reload の直後に成功した reload が差し替える', async () => {
+    const configStore = await store();
+    const before = configStore.current();
+
+    // 1 回目: 検証に失敗する内容。
+    await writeFile(
+      configPath,
+      JSON.stringify({ ...validManagedConfig(), version: 1 }),
+    );
+    expect((await configStore.reload()).ok).toBe(false);
+    expect(configStore.current()).toBe(before);
+
+    // 2 回目: 検証を通る内容。失敗が待ち行列へ伝播しないため実行される。
+    const changed = validManagedConfig();
+    (changed.servers as Record<string, unknown>[])[0]!.name = '失敗の後の成功';
+    await writeFile(configPath, JSON.stringify(changed));
+    expect((await configStore.reload()).ok).toBe(true);
+    expect(configStore.current().servers[0]?.name).toBe('失敗の後の成功');
   });
 });
 

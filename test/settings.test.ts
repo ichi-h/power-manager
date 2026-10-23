@@ -91,10 +91,17 @@ function twoServerConfig(): ConfigJson {
  * action が確かめたいのは「差し替えが呼ばれたか」「その結果の件数がログと応答に載るか」
  * だけなので、差し替え後の件数を固定値で与える。
  */
-function fakeRunner(replacedPlanCount = 0) {
+/**
+ * 予約実行器の偽物。計画の件数を `plans` で返し、差し替えで件数を更新する。
+ *
+ * 件数は `replacePlans` に渡された定義そのものから作る。action が旧定義（例:
+ * `reload` 前に取得した `store.current()`）を渡しても、応答の `schedules` が
+ * 新定義の件数と合わなくなるため検出できる（チケット 5859, FR-08）。
+ */
+function fakeRunner() {
   let count = 0;
-  const replacePlans = vi.fn((_config: ManagedConfig) => {
-    count = replacedPlanCount;
+  const replacePlans = vi.fn((config: ManagedConfig) => {
+    count = config.schedules.length;
   });
   const runner = {
     replacePlans,
@@ -276,7 +283,7 @@ describe('定義の再読込', () => {
       }),
     ];
 
-    const runner = fakeRunner(2);
+    const runner = fakeRunner();
     const built = context({
       load: async () => parseManagedConfig(reloaded),
       runner,
@@ -298,6 +305,15 @@ describe('定義の再読込', () => {
       built.store.current().schedules.map((schedule) => schedule.id),
     ).toEqual(['new-schedule', 'another-schedule']);
     expect(runner.replacePlans).toHaveBeenCalledTimes(1);
+    // 差し替えに渡されたのは新定義であることを固定する（FR-08）。fakeRunner が
+    // 渡された定義から件数を作るため、action が reload 前の `store.current()`
+    // （旧定義・別の件数）を渡す回帰は、ここで新定義と一致しなくなって検出される
+    // （チケット 5859）。
+    expect(JSON.parse(logs[0] ?? '')).toEqual({
+      event: 'config_reload',
+      result: 'succeeded',
+      schedules: reloaded.schedules.length,
+    });
     expect(logs).toHaveLength(1);
     expect(JSON.parse(logs[0] ?? '')).toEqual({
       event: 'config_reload',
@@ -310,7 +326,7 @@ describe('定義の再読込', () => {
     const broken = twoServerConfig();
     broken.groups = [];
     // `nas` が未定義グループを参照するため、相互参照の検証で落ちる。
-    const runner = fakeRunner(0);
+    const runner = fakeRunner();
     const built = context({
       load: async () => parseManagedConfig(broken),
       runner,
@@ -336,7 +352,7 @@ describe('定義の再読込', () => {
 
     const built = context({
       load: async () => parseManagedConfig(broken),
-      runner: fakeRunner(0),
+      runner: fakeRunner(),
     });
     const response = await action(reloadArgs(built.context));
 
@@ -398,21 +414,67 @@ describe('定義の再読込', () => {
     );
     const stop = vi.spyOn(runner, 'stop');
 
-    const built = context({ runner: null });
+    // reload 側の定義だけ予約 3 件にする。差し替え前後で `plans()` の件数が
+    // 変わるため、`replacePlans` が no-op でも通る旧来のテスト構成を改める
+    // （チケット 5859）。
+    const reloaded = twoServerConfig();
+    reloaded.schedules.push(
+      validSchedule({
+        id: 'evening-wake',
+        name: '夕方の起動',
+        target: { type: 'server', id: 'nas' },
+        operation: 'wake',
+        repeat: { kind: 'weekly', days: ['sat'], time: '18:00' },
+      }),
+    );
+
+    const built = context({
+      load: async () => parseManagedConfig(reloaded),
+      runner: null,
+    });
     built.context.set(scheduleRunnerContext, runner);
 
     const response = await action(reloadArgs(built.context));
 
     expect(await readJson(response)).toEqual({
       result: 'succeeded',
-      schedules: 2,
+      schedules: 3,
     });
     expect(stop).not.toHaveBeenCalled();
-    expect(runner.plans()).toHaveLength(2);
+    // 差し替え後の計画は新定義の 3 件（reload 側だけ 3 件に増やした）。
+    expect(runner.plans()).toHaveLength(3);
+  });
+
+  test('reload() が例外を投げても failed として応答する（FR-07）', async () => {
+    // `reload()` は失敗を値で返す契約だが、実装の不具合で例外になった場合も
+    // 画面をエラーバウンダリにせず、失敗として扱う。防御分岐の固定（チケット 5859）。
+    const runner = fakeRunner();
+    const built = context({
+      load: async () => {
+        throw new Error('unexpected failure');
+      },
+      runner,
+    });
+
+    const response = await action(reloadArgs(built.context));
+
+    expect(response.status).toBe(200);
+    expect(await readJson(response)).toEqual({ result: 'failed' });
+    // 差し替えもログも行わない（検証失敗のときと同じ扱い）。
+    expect(runner.replacePlans).not.toHaveBeenCalled();
+    expect(logs).toHaveLength(1);
+    const logged = JSON.parse(logs[0] ?? '') as { event?: string; result?: string; reason?: string };
+    expect(logged.event).toBe('config_reload');
+    expect(logged.result).toBe('failed');
+    // ManagedConfigError 以外の例外は内部の値をそのまま出さず、定型文言になる（SEC-05）。
+    expect(logged.reason).toBe('設定の再読込に失敗しました');
+    expect(logged.reason).not.toContain('unexpected failure');
+    // 旧設定が維持されている。
+    expect(built.store.current().schedules).toHaveLength(2);
   });
 
   test('intent が reload でない要求は再読込せず 400 を返す', async () => {
-    const runner = fakeRunner(0);
+    const runner = fakeRunner();
     const built = context({ runner });
 
     const response = await action(
